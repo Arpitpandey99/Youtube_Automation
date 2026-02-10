@@ -1,0 +1,79 @@
+# YouTube Kids Video Automation Configuration
+# Copy this file to config.yaml and fill in your API keys
+
+openai:
+  api_key: "YOUR_OPENAI_API_KEY"
+  model: "gpt-4o-mini"
+
+# Image generation - choose one provider
+image_provider: "replicate"  # options: "replicate", "openai", "huggingface", "pexels"
+
+replicate:
+  api_token: "YOUR_REPLICATE_API_TOKEN"
+  model: "black-forest-labs/flux-schnell"
+
+huggingface:
+  api_token: "YOUR_HF_API_TOKEN"
+  model: "stabilityai/stable-diffusion-xl-base-1.0"
+
+pexels:
+  api_key: "YOUR_PEXELS_API_KEY"
+
+# TTS configuration
+tts:
+  provider: "edge-tts"  # options: "edge-tts", "openai"
+  openai_voice: "nova"
+
+# Language configuration - pipeline runs for each language
+languages:
+  - code: "en"
+    name: "English"
+    voices:
+      - "en-US-AnaNeural"        # child female
+      - "en-US-AriaNeural"       # young female
+      - "en-US-JennyNeural"      # friendly female
+      - "en-US-MichelleNeural"   # warm female
+      - "en-US-GuyNeural"        # friendly male
+      - "en-GB-SoniaNeural"      # British female
+  - code: "hi"
+    name: "Hindi"
+    voices:
+      - "hi-IN-SwaraNeural"      # female
+      - "hi-IN-MadhurNeural"     # male
+
+# YouTube configuration
+youtube:
+  client_secrets_file: "client_secrets.json"
+  token_file: "token.json"
+  category_id: "24"  # Entertainment
+  privacy_status: "public"  # public, private, unlisted
+  made_for_kids: true
+
+# Instagram configuration
+instagram:
+  enabled: false
+  username: "YOUR_INSTAGRAM_USERNAME"
+  password: "YOUR_INSTAGRAM_PASSWORD"
+  session_file: "instagram_session.json"
+
+# Content configuration
+content:
+  niche: "fun educational facts for kids"
+  target_age: "3-8"
+  video_duration_minutes: 3
+  scenes_per_video: 6
+  image_style: "realistic, high quality photograph, vibrant colors, kid-friendly, visually appealing, professional photography"
+
+# Scheduler
+schedule:
+  videos_per_week: 3
+  upload_days: ["Monday", "Wednesday", "Friday"]
+  upload_time: "10:00"  # 24hr format
+
+# Video settings
+video:
+  resolution: [1920, 1080]
+  fps: 24
+  bg_music_volume: 0.08
+  subtitle_font_size: 48
+  subtitle_color: "yellow"

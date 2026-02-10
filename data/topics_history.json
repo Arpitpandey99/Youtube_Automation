@@ -1,0 +1,68 @@
+[
+  {
+    "topic": "Wacky Weather Wonders: Rainbows & Thunderstorms!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Explore the fun facts behind rainbows and thunderstorms in an exciting way!"
+  },
+  {
+    "topic": "Amazing Animal Adaptations: How Creatures Survive!",
+    "category": "animals",
+    "target_age": "3-8",
+    "description": "Discover the incredible ways animals change to live in their environments!"
+  },
+  {
+    "topic": "Bouncing into Bubbles: The Science of Soap!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Discover the fun facts about bubbles and how they are formed!"
+  },
+  {
+    "topic": "Fantastic Fossils: Discovering Dinosaurs!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Join us on an adventure to uncover the secrets of fossils and learn about the amazing dinosaurs that once roamed the Earth!"
+  },
+  {
+    "topic": "Marvelous Machines: How Everyday Tools Work!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Explore the fun and fascinating world of machines that help us in our daily lives!"
+  },
+  {
+    "topic": "Magical Mountains: Exploring Earth's Tallest Giants!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Join us on a journey to learn about the highest mountains in the world and the fun facts that make them special!"
+  },
+  {
+    "topic": "Whimsical Water Worlds: The Secrets of Oceans!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Dive into the colorful world of oceans and discover the amazing creatures that live beneath the waves!"
+  },
+  {
+    "topic": "Funky Food Facts: The Colors of Fruits and Veggies!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Explore the vibrant colors of fruits and vegetables and learn how they help our bodies stay healthy!"
+  },
+  {
+    "topic": "Silly Sounds: The Language of Animal Noises!",
+    "category": "animals",
+    "target_age": "3-8",
+    "description": "Join us as we explore the fun world of animal sounds and what they mean!"
+  },
+  {
+    "topic": "Fabulous Facts about Feelings: Understanding Emotions!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Join us as we explore different feelings and learn how to express them through fun activities and stories!"
+  },
+  {
+    "topic": "Curious Clouds: Discovering Different Types of Clouds!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Join us as we explore the fascinating world of clouds and learn about their shapes and what they mean for the weather!"
+  }
+]

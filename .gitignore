@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+
+# API keys and secrets
+config.yaml
+client_secrets.json
+token.json
+instagram_session.json
+
+# Generated output
+output/
+
+# Data files (topics history can be committed, music is large)
+data/music/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
