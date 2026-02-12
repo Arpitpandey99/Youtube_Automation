@@ -14,6 +14,7 @@ from moviepy.editor import (
 
 
 TRANSITION_DURATION = 0.6  # seconds of crossfade between scenes
+LULLABY_TRANSITION = 1.0  # gentler crossfade for lullaby videos
 
 
 def create_scene_clip(image_path: str, audio_path: str, narration_text: str,
@@ -341,8 +342,12 @@ def _add_subtitles_to_clip(clip, narration_text: str, config: dict,
         return clip
 
 
-def _add_bg_music(final_clip, config: dict, lang_dir: str = None):
-    """Add background music to a clip. Uses AI-generated music if configured, else local files."""
+def _add_bg_music(final_clip, config: dict, lang_dir: str = None, music_subdir: str = None):
+    """Add background music to a clip. Uses AI-generated music if configured, else local files.
+
+    music_subdir: if set (e.g. "lullaby"), look in data/music/{music_subdir}/ first,
+                  then fall back to data/music/.
+    """
     bg_music_path = None
     bg_cfg = config.get("bg_music", {})
 
@@ -357,10 +362,19 @@ def _add_bg_music(final_clip, config: dict, lang_dir: str = None):
 
     # Fall back to local music files
     if not bg_music_path:
-        music_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "music")
-        music_files = [f for f in os.listdir(music_dir) if f.endswith((".mp3", ".wav"))] if os.path.exists(music_dir) else []
-        if music_files:
-            bg_music_path = os.path.join(music_dir, random.choice(music_files))
+        base_music_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "music")
+        # If a subdir is requested (e.g. "lullaby"), try it first
+        if music_subdir:
+            sub_dir = os.path.join(base_music_dir, music_subdir)
+            sub_files = [f for f in os.listdir(sub_dir) if f.endswith((".mp3", ".wav"))] if os.path.exists(sub_dir) else []
+            if sub_files:
+                bg_music_path = os.path.join(sub_dir, random.choice(sub_files))
+        # Fall back to main music dir
+        if not bg_music_path:
+            music_dir = base_music_dir
+            music_files = [f for f in os.listdir(music_dir) if f.endswith((".mp3", ".wav"))] if os.path.exists(music_dir) else []
+            if music_files:
+                bg_music_path = os.path.join(music_dir, random.choice(music_files))
 
     if bg_music_path:
         bg_music = AudioFileClip(bg_music_path).volumex(config["video"]["bg_music_volume"])
@@ -556,4 +570,163 @@ def assemble_animated_shorts(config: dict, script_data: dict,
     final.close()
 
     print(f"  Animated Shorts: {total_duration:.1f}s, {len(scene_clips)} scenes")
+    return output_path
+
+
+# ── Poem & Lullaby assembly (new — does not touch existing functions) ──
+
+def _make_poem_lines_clip(lines: list, duration: float, resolution: tuple):
+    """Show 4 poem lines as read-along text at the top of the frame."""
+    if not lines:
+        return None
+    text = "\n".join(lines)
+    try:
+        return (
+            TextClip(
+                text,
+                fontsize=36,
+                color="white",
+                font="Arial-Bold",
+                stroke_color="black",
+                stroke_width=1,
+                method="caption",
+                size=(resolution[0] - 100, None),
+            )
+            .set_duration(duration)
+            .set_position(("center", 40))
+        )
+    except Exception:
+        return None
+
+
+def assemble_poem_video(config: dict, script_data: dict,
+                        animated_clips: list, audio_files: list,
+                        output_dir: str) -> str:
+    """Assemble poem video with read-along text overlay at top of each scene.
+    New function — does not touch assemble_animated_video().
+    """
+    resolution = tuple(config["video"]["resolution"])
+    scene_clips = []
+
+    for i, scene in enumerate(script_data["scenes"]):
+        if i >= len(animated_clips) or i >= len(audio_files):
+            break
+
+        clip_path = animated_clips[i]
+        audio_path = audio_files[i]
+        narration = scene["narration"]
+
+        if i == 0:
+            narration = script_data["intro_hook"] + " " + narration
+        elif i == len(script_data["scenes"]) - 1:
+            narration = narration + " " + script_data["outro"]
+
+        print(f"  Poem scene {i+1}...")
+        video_clip = VideoFileClip(clip_path).resize(resolution)
+        audio = AudioFileClip(audio_path)
+
+        target_dur = audio.duration + 0.5
+        if video_clip.duration < target_dur:
+            from moviepy.editor import vfx
+            loops = int(target_dur / video_clip.duration) + 1
+            video_clip = video_clip.fx(vfx.loop, n=loops)
+        video_clip = video_clip.subclip(0, target_dur)
+
+        # Bottom subtitle (narration)
+        video_clip = _add_subtitles_to_clip(video_clip, narration, config, resolution)
+
+        # Top read-along poem lines overlay
+        poem_lines = scene.get("lines", [])
+        lines_clip = _make_poem_lines_clip(poem_lines, target_dur, resolution)
+        if lines_clip:
+            video_clip = CompositeVideoClip([video_clip, lines_clip], size=resolution)
+
+        video_clip = video_clip.set_audio(audio)
+        scene_clips.append(video_clip)
+
+    t = TRANSITION_DURATION
+    for i in range(len(scene_clips)):
+        if i > 0:
+            scene_clips[i] = scene_clips[i].crossfadein(t)
+        if i < len(scene_clips) - 1:
+            scene_clips[i] = scene_clips[i].crossfadeout(t)
+
+    final = concatenate_videoclips(scene_clips, method="compose", padding=-t)
+    final = _add_bg_music(final, config, lang_dir=output_dir)
+
+    output_path = os.path.join(output_dir, "poem_video.mp4")
+    final.write_videofile(
+        output_path,
+        fps=config["video"]["fps"],
+        codec="libx264",
+        audio_codec="aac",
+        threads=4,
+    )
+
+    for clip in scene_clips:
+        clip.close()
+    final.close()
+    return output_path
+
+
+def assemble_lullaby_video(config: dict, script_data: dict,
+                           animated_clips: list, audio_files: list,
+                           output_dir: str) -> str:
+    """Assemble lullaby video with 1.0s gentle transitions and lullaby music.
+    New function — does not touch assemble_animated_video().
+    """
+    resolution = tuple(config["video"]["resolution"])
+    scene_clips = []
+
+    for i, scene in enumerate(script_data["scenes"]):
+        if i >= len(animated_clips) or i >= len(audio_files):
+            break
+
+        clip_path = animated_clips[i]
+        audio_path = audio_files[i]
+        narration = scene["narration"]
+
+        if i == 0:
+            narration = script_data["intro_hook"] + " " + narration
+        elif i == len(script_data["scenes"]) - 1:
+            narration = narration + " " + script_data["outro"]
+
+        print(f"  Lullaby scene {i+1}...")
+        video_clip = VideoFileClip(clip_path).resize(resolution)
+        audio = AudioFileClip(audio_path)
+
+        target_dur = audio.duration + 0.8  # extra padding for calm feel
+        if video_clip.duration < target_dur:
+            from moviepy.editor import vfx
+            loops = int(target_dur / video_clip.duration) + 1
+            video_clip = video_clip.fx(vfx.loop, n=loops)
+        video_clip = video_clip.subclip(0, target_dur)
+
+        video_clip = _add_subtitles_to_clip(video_clip, narration, config, resolution)
+        video_clip = video_clip.set_audio(audio)
+        scene_clips.append(video_clip)
+
+    t = LULLABY_TRANSITION  # 1.0s instead of 0.6s
+    for i in range(len(scene_clips)):
+        if i > 0:
+            scene_clips[i] = scene_clips[i].crossfadein(t)
+        if i < len(scene_clips) - 1:
+            scene_clips[i] = scene_clips[i].crossfadeout(t)
+
+    final = concatenate_videoclips(scene_clips, method="compose", padding=-t)
+    # Try lullaby-specific music first, fall back to main music dir
+    final = _add_bg_music(final, config, lang_dir=output_dir, music_subdir="lullaby")
+
+    output_path = os.path.join(output_dir, "lullaby_video.mp4")
+    final.write_videofile(
+        output_path,
+        fps=config["video"]["fps"],
+        codec="libx264",
+        audio_codec="aac",
+        threads=4,
+    )
+
+    for clip in scene_clips:
+        clip.close()
+    final.close()
     return output_path

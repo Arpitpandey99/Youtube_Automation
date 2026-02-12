@@ -166,5 +166,23 @@
     "category": "nature",
     "target_age": "3-8",
     "description": "Dive into the ocean to explore the wackiest and weirdest animals that live beneath the waves!"
+  },
+  {
+    "topic": "Gigantic Geology: The Amazing World Beneath Our Feet!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Explore the fascinating rocks and minerals that make up our planet and how they change over time!"
+  },
+  {
+    "topic": "Rhyming Rainy Day: Fun Poems About Droplets and Puddles!",
+    "category": "children's rhyming poem",
+    "target_age": "3-8",
+    "description": "Join us for playful poems that celebrate the joy of rainy days and splashing in puddles!"
+  },
+  {
+    "topic": "Starry Night Lullabies: Soft Melodies for Sweet Dreams",
+    "category": "music",
+    "target_age": "3-8",
+    "description": "Gentle lullabies inspired by the beauty of the night sky to help kids drift off to sleep."
   }
 ]

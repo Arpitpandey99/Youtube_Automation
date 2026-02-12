@@ -2,6 +2,26 @@ import json
 from openai import OpenAI
 
 
+# ── Template libraries (imported by poem_agent and lullaby_agent) ─────────────
+
+POEM_TEMPLATES = {
+    "animal_rhymes":   ["The Dancing Bear", "Elephant's Big Adventure", "Bunny's Garden Day", "The Clever Fox"],
+    "nature":          ["Seasons Change", "Rainbow After Rain", "The Busy Bee", "Little Raindrop"],
+    "counting_rhymes": ["Ten Little Fireflies", "Five Colorful Balloons", "One to Twenty Adventure"],
+    "alphabet_poems":  ["A is for Apple", "Letters All Around Us", "ABC Journey"],
+    "bedtime_verse":   ["Goodnight Moon and Stars", "The Sleepy Forest Friends", "Dreams of Tomorrow"],
+    "science":         ["The Tiny Seed", "Why the Sky is Blue", "Planets in a Row"],
+    "food":            ["The Fruit Rainbow", "Vegetables All Around", "Yummy in My Tummy"],
+}
+
+LULLABY_TEMPLATES = {
+    "goodnight_themes":      ["Goodnight Little One", "Sleep Sweet Child", "Tomorrow's New Day"],
+    "star_and_moon_themes":  ["Moonlight Lullaby", "Stars Watch Over You", "Twinkle Twinkle Little Star"],
+    "gentle_animal_friends": ["The Sleepy Kitten", "Owl's Nighttime Song", "Bear's Cozy Cave"],
+    "dreamland_journeys":    ["Sailing to Dreamland", "The Dream Train", "Cloud Castle Dreams"],
+}
+
+
 def _get_brand_voice_instructions(config: dict) -> str:
     """Build brand voice instructions from config if enabled."""
     brand = config.get("brand_voice", {})

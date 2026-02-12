@@ -145,6 +145,49 @@ def _generate_voiceover_elevenlabs(config: dict, texts: list[str],
     return audio_files
 
 
+def _generate_lullaby_voiceover_edge_tts(texts: list[str], output_dir: str,
+                                          voice: str) -> list[str]:
+    """Generate lullaby voiceover with slower rate (-10%) for a calming bedtime feel."""
+    audio_files = []
+
+    async def _generate_single(text: str, filepath: str):
+        communicate = edge_tts.Communicate(text, voice, rate="-10%", pitch="+0Hz")
+        await asyncio.wait_for(communicate.save(filepath), timeout=60)
+
+    for i, text in enumerate(texts):
+        filepath = os.path.join(output_dir, f"scene_{i+1}.mp3")
+        print(f"    Scene {i+1}: {len(text)} chars")
+        for attempt in range(4):
+            try:
+                asyncio.run(_generate_single(text, filepath))
+                break
+            except Exception as e:
+                if attempt < 3:
+                    wait = 10 * (attempt + 1)
+                    print(f"    TTS retry {attempt+1}/3 ({type(e).__name__}), waiting {wait}s...")
+                    time.sleep(wait)
+                else:
+                    raise
+        audio_files.append(filepath)
+        time.sleep(0.5)
+
+    return audio_files
+
+
+def generate_lullaby_voiceover(config: dict, script_data: dict, output_dir: str,
+                               voice: str = None) -> list[str]:
+    """Generate lullaby voiceover at -10% speech rate (slower, calming). edge-tts only."""
+    if voice is None:
+        voice = pick_voice(config, "hi")
+
+    audio_dir = os.path.join(output_dir, "audio")
+    os.makedirs(audio_dir, exist_ok=True)
+
+    texts = _build_scene_texts(script_data)
+    print("  Generating lullaby voiceover (slow pace, rate=-10%)...")
+    return _generate_lullaby_voiceover_edge_tts(texts, audio_dir, voice)
+
+
 def generate_voiceover(config: dict, script_data: dict, output_dir: str,
                        voice: str = None) -> list[str]:
     """Generate voiceover using the configured TTS provider."""
