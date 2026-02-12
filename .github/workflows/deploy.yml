@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Pull latest code on EC2
+        id: deploy
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -20,3 +21,47 @@ jobs:
             source venv/bin/activate
             pip install -r requirements.txt --quiet
             echo "Deployed at $(date)"
+
+      - name: Send deployment success email
+        if: success()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.GMAIL_SENDER }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          to: arpitpandey6599@gmail.com,prachipandey2024@gmail.com
+          from: YouTube Bot <${{ secrets.GMAIL_SENDER }}>
+          subject: "[YouTube Bot] Deployed successfully — ${{ github.sha }}"
+          body: |
+            Deployment succeeded!
+
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Pushed by: ${{ github.actor }}
+            Time: ${{ github.event.head_commit.timestamp }}
+
+            Message: ${{ github.event.head_commit.message }}
+
+            EC2 is now running the latest code.
+
+      - name: Send deployment failure email
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.GMAIL_SENDER }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          to: arpitpandey6599@gmail.com,prachipandey2024@gmail.com
+          from: YouTube Bot <${{ secrets.GMAIL_SENDER }}>
+          subject: "[YouTube Bot] Deployment FAILED — ${{ github.sha }}"
+          body: |
+            Deployment FAILED!
+
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Pushed by: ${{ github.actor }}
+
+            Check the Actions tab for details:
+            https://github.com/Arpitpandey99/Youtube_Automation/actions
