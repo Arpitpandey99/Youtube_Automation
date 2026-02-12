@@ -2,7 +2,11 @@
 
 ## System Overview
 
-Fully automated pipeline that generates and uploads kid-friendly YouTube videos and Instagram Reels in multiple languages using AI. Runs on AWS EC2 t4g.small (ARM64) with twice-daily cron, GitHub Actions CI/CD, and Gmail email notifications after each run.
+Fully automated pipeline that generates and uploads **Hinglish** kid-friendly YouTube videos and Shorts using AI. Runs on AWS EC2 t4g.small (ARM64) with twice-daily cron, GitHub Actions CI/CD, and Gmail email notifications after each run.
+
+- **`--video`** → 2–3 min animated landscape video (1280×720), uploaded to YouTube
+- **`--shorts`** → ~1 min animated vertical Short (1080×1920), uploaded as YouTube Short
+- All content is **Hinglish** (60–70% English + 30–40% Hindi), narrated by Indian female voices
 
 ---
 
@@ -18,19 +22,21 @@ Fully automated pipeline that generates and uploads kid-friendly YouTube videos 
 ┌─────────────────────────────────────────────────────────────────┐
 │              GITHUB ACTIONS (.github/workflows/deploy.yml)      │
 │   appleboy/ssh-action → EC2: git pull + pip install             │
+│   dawidd6/action-send-mail → Gmail deploy notification          │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ deploys to
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │              AWS EC2 t4g.small (ARM64 Graviton2)                 │
 │              Ubuntu 24.04 LTS — Asia/Kolkata (IST)              │
+│              2 GB RAM + 2 GB swap — 20 GB gp3 EBS               │
 │                                                                 │
 │  crontab:                                                       │
-│    0  9 * * *  python main.py --animated >> logs/run.log        │
-│    0 21 * * *  python main.py --animated >> logs/run.log        │
+│    0  9 * * *  python main.py --video  >> logs/run.log          │
+│    0 21 * * *  python main.py --shorts >> logs/run.log          │
 │                         │                                       │
 │                         ▼                                       │
-│              run_animated_pipeline()                            │
+│              run_video_pipeline()  /  run_shorts_pipeline()     │
 │                         │                                       │
 │                         ▼                                       │
 │              Email summary sent (Gmail SMTP)                    │
@@ -39,7 +45,7 @@ Fully automated pipeline that generates and uploads kid-friendly YouTube videos 
 └─────────────────────────────────────────────────────────────────┘
                            │ uploads to
                            ▼
-             YouTube (full video + Shorts)
+             YouTube (full video at 9 AM + Short at 9 PM)
 ```
 
 ### EC2 Instance Details
@@ -48,12 +54,14 @@ Fully automated pipeline that generates and uploads kid-friendly YouTube videos 
 |------|-------|
 | Instance type | t4g.small (ARM64 Graviton2) |
 | vCPU | 2 |
-| RAM | 2 GB |
+| RAM | 2 GB + 2 GB swap |
 | Storage | 20 GB gp3 EBS |
 | OS | Ubuntu 24.04 LTS (ARM64) |
 | Timezone | Asia/Kolkata (IST) |
 | Pricing model | Spot (~$3-4/month) |
 | Elastic IP | Yes (static, for GitHub Actions SSH) |
+
+> **Note:** 2 GB swap added to prevent OOM kill during MoviePy video encoding at 1280×720.
 
 ### Monthly Cost Estimate
 
@@ -69,259 +77,207 @@ Fully automated pipeline that generates and uploads kid-friendly YouTube videos 
 
 ## Pipeline Architecture
 
-### Regular Pipeline (`python main.py`)
+### `--video` Pipeline (2–3 min landscape, 9 AM IST)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│              SCHEDULER / PREFECT ORCHESTRATION                   │
-│       (cron / Python schedule / Prefect with retries)            │
-│           Triggers pipeline twice daily (9 AM + 9 PM IST)        │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-                    ┌──────▼──────┐
-                    │  Analytics  │ (fetch metrics from previous runs)
-                    │  Feedback   │
-                    └──────┬──────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    ORCHESTRATOR (main.py)                        │
-│                                                                 │
-│  ┌───────────┐   ┌──────────┐   ┌──────────────────────────┐   │
-│  │  Step 1   │──▶│  Step 2  │──▶│        Step 3            │   │
-│  │  Topic    │   │  Script  │   │   Image Generation       │   │
-│  │(+analytics│   │(+brand   │   │    (rate-limited)        │   │
-│  │  hints)   │   │  voice)  │   │       (shared)           │   │
-│  └───────────┘   └──────────┘   └──────────────────────────┘   │
-│                                              │                  │
-│                    ┌─────────────────────────┐│                  │
-│                    │   FOR EACH LANGUAGE     ││                  │
-│                    │   (English, Hindi)      │▼                  │
-│  ┌─────────────────┴────────────────────────────────────────┐   │
-│  │                                                          │   │
-│  │  ┌──────────┐  ┌───────────┐  ┌────────────────────┐    │   │
-│  │  │ Script   │  │ Voice     │  │  Video Assembly    │    │   │
-│  │  │ (lang)   │─▶│ (random)  │─▶│  (full + shorts)  │    │   │
-│  │  └──────────┘  └───────────┘  └────────────────────┘    │   │
-│  │                      │                │                 │   │
-│  │               ┌──────▼──────┐         │                 │   │
-│  │               │  Captions   │         │                 │   │
-│  │               │  (.srt)     │         │                 │   │
-│  │               └─────────────┘         │                 │   │
-│  │                                       │                 │   │
-│  │  ┌──────────┐  ┌───────────┐  ┌──────▼─────────────┐   │   │
-│  │  │ Metadata │  │ Thumbnails│  │     UPLOAD         │   │   │
-│  │  │ + A/B    │─▶│ (YT + IG │─▶│ YT + Shorts + IG  │   │   │
-│  │  │ Testing  │  │ + Shorts) │  │ + Captions         │   │   │
-│  │  └──────────┘  └───────────┘  └────────────────────┘   │   │
-│  │                                       │                 │   │
-│  │                              ┌────────▼────────┐        │   │
-│  │                              │ Playlist + DB   │        │   │
-│  │                              │ + Cleanup       │        │   │
-│  │                              └─────────────────┘        │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-                           │
-                    ┌──────▼──────┐
-                    │   Email     │ Gmail SMTP — run summary + video links
-                    │  Summary    │ → notification_agent.py
-                    └─────────────┘
+[1] Topic Generation (GPT-4o-mini)
+         │  topic + category + target_age
+         ▼
+[2] Hinglish Script (GPT-4o-mini, language="Hindi")
+         │  6 scenes, narration in Hinglish, visual_description in English
+         ▼
+[3] Image Generation (Replicate Flux Schnell)
+         │  6 soft/dreamy cartoon scene images (shared)
+         │  style: "soft watercolor illustration, pastel colors, dreamy..."
+         ▼
+[4] Indian Accent Voiceover (edge-tts)
+         │  Random pick from: en-IN-NeerjaNeural | en-IN-NeerjaExpressiveNeural | hi-IN-SwaraNeural
+         │  6 scene audio files (MP3)
+         ▼
+[5] Ken Burns Animation (MoviePy + NumPy)
+         │  Each image → animated VideoClip
+         │  Random effect per scene: zoom_in / zoom_out / pan_left / pan_right / pan_up / combined
+         ▼
+[6] Caption / SRT Generation
+         │  Timed subtitles from narration + audio durations
+         ▼
+[7] Video Assembly (MoviePy) — 1280×720
+         │  Animated clips + audio + crossfade transitions
+         │  Background music: random track from data/music/ (looped, 8% volume)
+         │  Output: final_video.mp4
+         ▼
+[8] Metadata + Thumbnail (GPT-4o-mini + Pillow)
+         │  SEO title, Hinglish description, tags
+         │  Thumbnail: 1280×720
+         ▼
+[9] YouTube Upload + Captions (YouTube Data API v3)
+         │  Uploads video + thumbnail + .srt captions
+         ▼
+[10] Database (SQLite) + Cleanup
+         │  Stores video_id; deletes audio/, animated_clips/, images/
+         ▼
+Email Summary (Gmail SMTP)
 ```
 
-### Animated Pipeline (`python main.py --animated`)
+### `--shorts` Pipeline (~1 min vertical, 9 PM IST)
 
 ```
-Topic → English Script → Cartoon Images (Replicate Flux Schnell)
-                                │
-                    FOR EACH LANGUAGE
-                                │
-                         Voiceover (OpenAI TTS)
-                                │
-                    Ken Burns Animation (animation_agent.py)
-                    ┌────────────────────────┐
-                    │  Each image → VideoClip │
-                    │  Effects (random):      │
-                    │   zoom_in / zoom_out    │
-                    │   pan_left / pan_right  │
-                    │   pan_up / combined     │
-                    └────────────────────────┘
-                                │
-                    Assemble animated video (MoviePy)
-                    ├── Full video (1920x1080, ~3 min)
-                    └── Shorts (1080x1920 vertical, ≤59s)
-                              + blurred background fill
-                                │
-                    Upload → YouTube + Shorts
-                                │
-                    Email summary → Gmail
+[1] Topic Generation (GPT-4o-mini)
+         ▼
+[2] Base Hinglish Script (GPT-4o-mini)
+         │  6 scenes — visual_description used for image generation
+         ▼
+[3] Image Generation (Replicate Flux Schnell)
+         │  6 soft/dreamy cartoon scene images (shared)
+         ▼
+[4] Shorts-Optimised Script (GPT-4o-mini)
+         │  Re-hooked punchy version: 3 scenes, ~1 min, strong hook
+         ▼
+[5] Indian Accent Voiceover (edge-tts)
+         │  3 scene audio files for the shorts script
+         ▼
+[6] Ken Burns Animation (MoviePy + NumPy)
+         │  Animated clips from base images
+         ▼
+[7] Shorts Assembly (MoviePy) — 1080×1920 vertical
+         │  Landscape clips → vertical via blurred background fill
+         │    blurred + darkened bg fills full 1080×1920 frame
+         │    original image centered on top (no stretching)
+         │  Background music: random track from data/music/ (looped, 8% volume)
+         │  Capped at 59 seconds
+         │  Output: shorts_video.mp4
+         ▼
+[8] Metadata + Thumbnail (GPT-4o-mini + Pillow)
+         │  Shorts-optimised title (≤100 chars + #Shorts)
+         │  Thumbnail: 1080×1920
+         ▼
+[9] YouTube Upload (YouTube Data API v3)
+         ▼
+[10] Database (SQLite) + Cleanup
+         ▼
+Email Summary (Gmail SMTP)
 ```
 
 ---
 
-## Pipeline Steps
+## Agent Reference
 
-### Step 0: Analytics Feedback (Optional)
-**Agent:** `agents/analytics_agent.py`
-**Tool:** YouTube Data API v3
-
-- Fetches views/likes/CTR for videos uploaded 48+ hours ago
-- Stores metrics in SQLite (`data/pipeline.db`)
-- Updates topic scores by category
-- Provides performance hints to topic generation
-- **Config:** `analytics.enabled: true/false`
-
-### Step 1: Topic Generation
-**Agent:** `agents/topic_agent.py`
+### `agents/topic_agent.py`
 **Tool:** GPT-4o-mini
 
 - Reads last 50 topics from `data/topics_history.json` to prevent duplicates
-- When analytics enabled: injects top-performing categories as hints
-- Generates a unique kid-friendly topic with category and target age
+- Generates kid-friendly topic with category and target age (3-8)
 - **Output:** `{ topic, category, target_age, description }`
 
-### Step 2: Script Writing
-**Agent:** `agents/script_agent.py`
+### `agents/script_agent.py`
 **Tool:** GPT-4o-mini
 
-- Generates scene-by-scene script for specified language
-- Brand voice: when enabled, injects tone, catchphrases, vocabulary level
-- For non-English: narration in target language, `visual_description` stays in English
-- Also generates `generate_shorts_script()` — re-hooked, punchier version for Shorts
+- `generate_script(config, topic, language="Hindi")` → Hinglish mode
+  - Narration: 60–70% English + 30–40% Hindi words mixed naturally
+  - `visual_description` always stays in English (used as image prompts)
+- `generate_shorts_script(config, topic, base_script, language)` → punchy 3-scene version
 - **Output:** `{ title, intro_hook, scenes[], outro }`
 
-### Step 3: Image Generation (Shared)
-**Agent:** `agents/asset_agent.py`
-**Tool:** Replicate (Flux Schnell) / DALL-E 3 / HuggingFace / Pexels
+### `agents/asset_agent.py`
+**Tools:** Replicate (Flux Schnell), edge-tts / OpenAI TTS / ElevenLabs
 
-- Token-bucket rate limiter prevents API bans
-- Images generated once and shared across all languages
-- For `--animated`: uses cartoon image style (Pixar-like, no text)
-- **Output:** `[ scene_1.png, scene_2.png, ... ]`
+**Image generation:**
+- `generate_images()` — routes to configured `image_provider`
+- Providers: `replicate` (default, Flux Schnell) / `openai` (DALL-E 3) / `huggingface` / `pexels`
+- Retry with exponential backoff (15s × attempt, up to 5 attempts)
 
-### Step 4: Voice Selection + Voiceover (Per Language)
-**Agent:** `agents/asset_agent.py`
-**Tool:** OpenAI TTS / edge-tts / ElevenLabs
+**Voiceover:**
+- `pick_voice(config, "hi")` → random from 3 Indian female voices
+- `generate_voiceover_only()` → edge-tts (default) with `+3%` rate, `+0Hz` pitch
+- Fallbacks: OpenAI TTS (`nova`), ElevenLabs
+- `_sanitize_tts_text()` strips SSML-breaking characters (`&`, `<`, `>`, smart quotes)
 
-- **Default: OpenAI TTS** (nova voice, reliable, no 2FA needed)
-- edge-tts: free but occasionally fails with `NoAudioReceived`
-- ElevenLabs: premium quality
-- **Output:** `[ scene_1.mp3, scene_2.mp3, ... ]`
+**Background music:**
+- `generate_bg_music_ai()` → Replicate musicgen (future use when model is available)
 
-### Step 5: Ken Burns Animation (Animated Pipeline Only)
-**Agent:** `agents/animation_agent.py`
-**Tool:** MoviePy + NumPy + Pillow
+### `agents/animation_agent.py`
+**Tools:** MoviePy, NumPy, Pillow
 
-- Converts static images into animated video clips
-- Six effects (randomly assigned per scene):
-  - `zoom_in` — progressive zoom into center
-  - `zoom_out` — start zoomed, slowly pull out
-  - `pan_left` — horizontal pan right→left
-  - `pan_right` — horizontal pan left→right
-  - `pan_up` — vertical pan bottom→top
-  - `combined` — slow zoom + gentle horizontal pan
-- Each effect uses `VideoClip(make_frame, duration)` for smooth animation
-- Images pre-scaled 20–50% larger than target to allow room for movement
-- **Output:** `[ scene_1.mp4, scene_2.mp4, ... ]` (animated clips)
+Ken Burns effects applied per scene (random selection):
 
-### Step 6: Caption & SRT Generation (Per Language)
-**Agent:** `agents/caption_agent.py`
+| Effect | Description |
+|--------|-------------|
+| `zoom_in` | Progressive zoom into center |
+| `zoom_out` | Start zoomed, slowly pull out |
+| `pan_left` | Horizontal pan right→left |
+| `pan_right` | Horizontal pan left→right |
+| `pan_up` | Vertical pan bottom→top |
+| `combined` | Slow zoom + gentle horizontal drift |
 
-- Builds SRT subtitle files from script narration + audio durations
-- Each scene split into ~10-word subtitle chunks, timed to audio
-- **Output:** `captions_en.srt`
+- Images pre-scaled 20–50% larger than target to allow movement headroom
+- Uses `VideoClip(make_frame, duration)` pattern (not `ImageClip`) for smooth frames
 
-### Step 7: Video Assembly (Per Language)
-**Agent:** `agents/video_agent.py`
+### `agents/video_agent.py`
 **Tool:** MoviePy
 
-#### Regular Full Video (Landscape 1920x1080)
-- Each scene: image + audio + subtitle overlay + crossfade transitions
-- Background music from `data/music/`, looped at 8% volume
-- **Output:** `final_video.mp4` (~3 min)
+- `assemble_animated_video()` → landscape 1280×720, `final_video.mp4`
+- `assemble_animated_shorts()` → vertical 1080×1920, `shorts_video.mp4`
+- `_add_bg_music(clip, config, lang_dir)` → picks random file from `data/music/`, loops to fill duration
+- `_prepare_vertical_clip()` → converts landscape clip to vertical with blurred background
+- `_add_subtitles_to_clip()` → text overlay (requires ImageMagick; degrades gracefully if missing)
+- Crossfade transitions: 0.6s for video, 0.36s for shorts
 
-#### Regular Shorts (Vertical 1080x1920)
-- Re-hooked punchier script, best 3 scenes
-- Falls back to original truncation if re-hook fails
-- **Output:** `shorts_video.mp4` (≤59s)
+### `agents/caption_agent.py`
+- Builds SRT files timed to audio durations
+- Splits narration into ~10-word subtitle chunks
 
-#### Animated Full Video (Landscape 1920x1080)
-- Uses pre-animated Ken Burns clips instead of static images
-- Clips looped to match audio duration
-- Crossfade transitions between scenes
-- **Output:** `final_video.mp4` (~3 min)
+### `agents/metadata_agent.py`
+**Tool:** GPT-4o-mini + Pillow
 
-#### Animated Shorts (Vertical 1080x1920)
-- Animated clips converted to vertical with blurred background fill
-- `_prepare_vertical_clip()`: blurs + darkens landscape frame as background, centers foreground
-- **Output:** `shorts_video.mp4` (≤59s)
+- `generate_metadata()` → SEO title, Hinglish description, up to 30 tags
+- `generate_shorts_metadata()` → adds `#Shorts`, trims title to ≤100 chars
+- `generate_youtube_thumbnail()` → 1280×720 landscape thumbnail
+- `generate_shorts_thumbnail()` → 1080×1920 vertical thumbnail
 
-### Step 8: Metadata + Thumbnails (Per Language)
-**Agent:** `agents/metadata_agent.py`, `agents/ab_agent.py`
-**Tools:** GPT-4o-mini + Pillow
-
-- GPT generates SEO-optimized metadata (title, description, tags)
-- A/B Testing (optional): 3 title/hook/thumbnail variants
-- **Platform thumbnails:**
-  - YouTube: 1280×720 horizontal
-  - Instagram: 1080×1920 vertical
-  - Shorts: 1080×1920 vertical
-
-### Step 9: YouTube Upload + Captions
-**Agent:** `agents/upload_agent.py`
+### `agents/upload_agent.py`
 **Tool:** YouTube Data API v3 (OAuth 2.0)
 
-- Uploads video + thumbnail + SRT captions
-- Rate-limited via token bucket
-- **Output:** video URL + video_id
+- Uploads video + thumbnail to YouTube
+- `upload_captions()` → attaches `.srt` to video
+- Token-bucket rate-limited
 
-### Step 10: Playlist Automation (Optional)
-**Agent:** `agents/playlist_agent.py`
-
-- Auto-creates playlists by category + language when 3+ videos exist
-- **Config:** `playlists.enabled: true/false`
-
-### Step 11: Instagram Assets (Optional)
-**Agent:** `agents/instagram_agent.py`
-
-- Saves reel video + caption + thumbnail to `instagram/` folder
-- **Config:** `instagram.enabled: true/false`
-
-### Step 12: Email Notification
-**Agent:** `agents/notification_agent.py`
-**Tool:** Gmail SMTP (App Password) or Resend API
+### `agents/notification_agent.py`
+**Tool:** Gmail SMTP (App Password)
 
 - Sends run summary email after every pipeline completion
-- Contains: timestamp, YouTube video links, Shorts links, output directory
-- Supports multiple recipients (comma-separated)
-- **Providers:** `gmail` (App Password required) or `resend` (free, no 2FA)
-- **Config:** `notifications.email.enabled: true`
+- Contains: timestamp, YouTube video links, output directory
+- Supports comma-separated `recipient_email`
 
-### Step 13: Database + Cleanup
-- Stores video_id, shorts_id in SQLite (`data/pipeline.db`)
-- Deletes: audio/, animated_clips/, images/, large video files
-- Keeps: run_log.json, scripts (.json), metadata.json, captions (.srt)
+### `agents/caption_agent.py`, `agents/db.py`, `agents/rate_limiter.py`
+Supporting agents — captions, SQLite storage, per-API token-bucket rate limiting.
 
 ---
 
-## Features Summary
+## Background Music
 
-| Feature | Config Key | Default | Description |
-|---------|-----------|---------|-------------|
-| Animated Pipeline | `--animated` flag | Off | Ken Burns effects on cartoon images |
-| Email Notifications | `notifications.email.enabled` | false | Gmail/Resend summary after each run |
-| Twice-Daily Schedule | cron on EC2 | 9 AM + 9 PM IST | Runs pipeline automatically |
-| GitHub Actions CI/CD | `.github/workflows/deploy.yml` | Active | Auto-deploy on push to main |
-| Rate Limiting | (always on) | Enabled | Token-bucket per API provider |
-| SQLite Database | (always on) | Enabled | Tracks videos, metrics, playlists |
-| Brand Voice | `brand_voice.enabled` | false | Consistent tone/catchphrases |
-| Multi-TTS | `tts.provider` | openai | OpenAI TTS (default) / edge-tts / ElevenLabs |
-| Captions/SRT | (always on) | Enabled | Auto-generated subtitle files |
-| Re-hooked Shorts | (always on) | Enabled | Punchier hooks for short-form |
-| A/B Testing | `ab_testing.enabled` | false | Test title/hook/thumbnail variants |
-| Analytics Loop | `analytics.enabled` | false | Learn from past video performance |
-| Playlists | `playlists.enabled` | false | Auto-create & organize playlists |
-| Prefect | `orchestration.engine` | simple | Event-driven orchestration with retries |
+Background music is pre-downloaded once via `python main.py --generate-music` and stored in `data/music/`. Each video run picks one track at random.
+
+| Source | License | Tracks |
+|--------|---------|--------|
+| FesliyanStudios.com (David Renda) | Free for commercial use | 10 kids instrumental tracks |
+
+Track list: `kids_curious_kiddo`, `kids_joyful_lullaby`, `kids_gentle_lullaby`, `kids_dancing_silly`, `kids_play_date`, `kids_duck_duck_goose`, `kids_dancing_baby`, `kids_clap_and_sing`, `kids_pig_in_the_mud`, `kids_googoo_gaga`
+
+Music is looped to match video duration and mixed at 8% volume (`bg_music_volume: 0.08`).
+
+---
+
+## Voice Configuration
+
+All voices are Indian female, free via edge-tts:
+
+| Voice | Type | Description |
+|-------|------|-------------|
+| `en-IN-NeerjaNeural` | Indian English | Warm, natural Hinglish storyteller |
+| `en-IN-NeerjaExpressiveNeural` | Indian English | Expressive, great for kids |
+| `hi-IN-SwaraNeural` | Hindi female | Most natural for Hinglish narration |
+
+Voice is picked randomly per run via `pick_voice(config, "hi")`.
 
 ---
 
@@ -329,52 +285,64 @@ Topic → English Script → Cartoon Images (Replicate Flux Schnell)
 
 ```
 Youtube_Automation/
-├── main.py                     # Orchestrator — regular + animated pipeline
-├── prefect_flow.py             # Prefect-based orchestration (optional)
+├── main.py                     # Orchestrator — video + shorts pipelines
 ├── config.yaml                 # API keys + settings (gitignored)
 ├── config.example.yaml         # Template config (committed)
 ├── requirements.txt            # Python dependencies
 ├── ARCHITECTURE.md             # This file
+├── README.md                   # Quick-start guide
 ├── .gitignore
 │
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml          # GitHub Actions CI/CD → AWS EC2
+│       └── deploy.yml          # GitHub Actions CI/CD → AWS EC2 + deploy email
 │
 ├── agents/
-│   ├── topic_agent.py          # GPT topic generation (+analytics hints)
-│   ├── script_agent.py         # GPT script writing (+brand voice, +shorts script)
-│   ├── asset_agent.py          # TTS voiceover (openai/edge/elevenlabs) + images
+│   ├── topic_agent.py          # GPT topic generation
+│   ├── script_agent.py         # GPT script writing (Hinglish + shorts variant)
+│   ├── asset_agent.py          # TTS voiceover (edge-tts/openai/elevenlabs) + images
 │   ├── animation_agent.py      # Ken Burns effects → animated VideoClip per scene
-│   ├── video_agent.py          # MoviePy assembly (regular + animated, full + shorts)
+│   ├── video_agent.py          # MoviePy assembly (landscape video + vertical shorts)
 │   ├── metadata_agent.py       # GPT metadata + platform-specific thumbnails
 │   ├── upload_agent.py         # YouTube upload + caption upload (OAuth 2.0)
-│   ├── instagram_agent.py      # Instagram Reels asset prep
+│   ├── instagram_agent.py      # Instagram Reels asset prep (optional)
 │   ├── caption_agent.py        # SRT/caption generation
-│   ├── notification_agent.py   # Email summary (Gmail SMTP / Resend API)
-│   ├── ab_agent.py             # A/B testing for titles/hooks/thumbnails
-│   ├── analytics_agent.py      # YouTube analytics feedback loop
-│   ├── playlist_agent.py       # Playlist auto-creation & management
-│   ├── rate_limiter.py         # Token-bucket rate limiter
-│   └── db.py                   # SQLite database (videos, metrics, playlists)
+│   ├── notification_agent.py   # Email summary (Gmail SMTP)
+│   ├── ab_agent.py             # A/B testing for titles/hooks (optional)
+│   ├── analytics_agent.py      # YouTube analytics feedback loop (optional)
+│   ├── playlist_agent.py       # Playlist auto-creation (optional)
+│   ├── rate_limiter.py         # Token-bucket rate limiter per API provider
+│   └── db.py                   # SQLite database (videos, metrics)
 │
 ├── data/
 │   ├── topics_history.json     # Track used topics (avoid repeats)
 │   ├── pipeline.db             # SQLite database (gitignored)
-│   └── music/                  # Royalty-free background tracks (optional)
+│   └── music/                  # 10 pre-downloaded kids instrumental tracks
+│       ├── kids_curious_kiddo.mp3
+│       ├── kids_joyful_lullaby.mp3
+│       └── ...
 │
 └── output/                     # Generated files per run (gitignored)
-    └── animated_YYYYMMDD_HHMMSS/
-        ├── images/             # Shared cartoon scene images
-        ├── en/
+    ├── video_YYYYMMDD_HHMMSS/
+    │   ├── images/             # Shared cartoon scene images (6 PNGs)
+    │   ├── hi/
+    │   │   ├── audio/          # Scene voiceover MP3s (deleted after upload)
+    │   │   ├── animated_clips/ # Ken Burns MP4 clips (deleted after upload)
+    │   │   ├── final_video.mp4 # 1280×720 landscape video
+    │   │   ├── captions_hi.srt
+    │   │   ├── thumbnail.png
+    │   │   └── metadata.json
+    │   ├── script.json
+    │   └── run_log.json
+    └── shorts_YYYYMMDD_HHMMSS/
+        ├── images/
+        ├── hi/
         │   ├── audio/
-        │   ├── animated_clips/ # Ken Burns mp4 clips (deleted after upload)
-        │   ├── final_video.mp4
-        │   ├── shorts_video.mp4
-        │   ├── captions_en.srt
+        │   ├── animated_clips/
+        │   ├── shorts_video.mp4  # 1080×1920 vertical Short
+        │   ├── thumbnail.png
         │   └── metadata.json
-        ├── hi/                 # Hindi outputs (same structure)
-        ├── script_en.json
+        ├── script.json
         └── run_log.json
 ```
 
@@ -382,20 +350,21 @@ Youtube_Automation/
 
 ## Tech Stack
 
-| Component | Tool | Cost/run (2 langs) |
-|-----------|------|--------------------|
+| Component | Tool | Cost/run |
+|-----------|------|----------|
 | Text Generation | GPT-4o-mini | ~$0.02 |
 | Image Generation | Replicate Flux Schnell | ~$0.02 (6 images) |
-| Text-to-Speech | OpenAI TTS (nova) | ~$0.01 |
+| Text-to-Speech | edge-tts (Indian female voices) | Free |
 | Ken Burns Animation | MoviePy + NumPy | Free (CPU) |
 | Video Assembly | MoviePy | Free (CPU) |
+| Background Music | FesliyanStudios.com (pre-downloaded) | Free |
 | Thumbnails | Pillow | Free |
 | Captions/SRT | Built-in | Free |
 | YouTube Upload | YouTube Data API v3 | Free (quota) |
 | Email Notification | Gmail SMTP (App Password) | Free |
 | Database | SQLite | Free |
 | Scheduling | Linux cron (EC2) | Free |
-| **Total per run** | | **~$0.05** |
+| **Total per run** | | **~$0.04** |
 
 | Infrastructure | Tool | Cost/month |
 |----------------|------|------------|
@@ -407,31 +376,53 @@ Youtube_Automation/
 
 ---
 
+## CLI Reference
+
+```bash
+# Run pipelines
+python main.py --video               # 2-3 min Hinglish video + upload
+python main.py --shorts              # ~1 min Hinglish Short + upload
+python main.py --video --no-upload   # Generate video only (no YouTube upload)
+python main.py --shorts --no-upload  # Generate Short only (no upload)
+
+# Scheduler (runs --video at 9 AM, --shorts at 9 PM)
+python main.py --schedule
+
+# One-time music download (run once after first EC2 setup)
+python main.py --generate-music      # Downloads 10 tracks to data/music/
+
+# Help
+python main.py --help
+```
+
+---
+
 ## Configuration Reference
 
 | Section | Key Settings |
 |---------|-------------|
-| `openai` | API key, model (gpt-4o-mini) |
-| `image_provider` | replicate / openai / huggingface / pexels |
-| `replicate` | API token, model (flux-schnell) |
-| `tts` | provider (openai/edge-tts/elevenlabs), openai_voice |
-| `languages[]` | code, name, voice pool per language |
-| `youtube` | client_secrets_file, token_file, category, privacy, made_for_kids |
-| `instagram` | enabled, ig_user_id, access_token |
-| `content` | niche, target_age, video_duration_minutes, scenes_per_video, image_style |
-| `schedule` | upload_days (all 7), upload_time ("21:00") |
-| `video` | resolution, fps, bg_music_volume, subtitle_font_size, subtitle_color |
-| `animation` | provider (kenburns/ai), image_style, kenburns.zoom_ratio, kenburns.effects |
-| `notifications.email` | enabled, provider (gmail/resend), sender_email, sender_password, recipient_email |
-| `brand_voice` | enabled, tone, catchphrases, vocabulary_level |
-| `ab_testing` | enabled, variants_count, min_data_points |
-| `analytics` | enabled, youtube_analytics, fetch_delay_hours |
-| `playlists` | enabled, auto_create, min_videos_for_playlist, naming_template |
-| `orchestration` | engine (simple/prefect) |
+| `openai` | `api_key`, `model` (gpt-4o-mini) |
+| `image_provider` | `replicate` / `openai` / `huggingface` / `pexels` |
+| `replicate` | `api_token`, `model` (flux-schnell) |
+| `tts` | `provider` (edge-tts/openai/elevenlabs), `openai_voice` |
+| `languages[]` | `code: "hi"`, `name: "Hindi"`, `voices[]` (3 Indian female voices) |
+| `youtube` | `client_secrets_file`, `token_file`, `category_id`, `privacy_status`, `made_for_kids` |
+| `instagram` | `enabled`, `ig_user_id`, `access_token` |
+| `content` | `niche`, `target_age`, `video_duration_minutes`, `scenes_per_video`, `image_style` |
+| `schedule` | `upload_days`, `upload_time` |
+| `video` | `resolution` ([1280, 720]), `fps`, `bg_music_volume` (0.08), `subtitle_font_size`, `subtitle_color` |
+| `animation` | `provider` (kenburns), `image_style`, `kenburns.zoom_ratio`, `kenburns.effects` |
+| `bg_music` | `provider` (local), `replicate_model`, `prompt`, `duration` |
+| `notifications.email` | `enabled`, `provider` (gmail), `sender_email`, `sender_password`, `recipient_email` |
+| `brand_voice` | `enabled`, `tone`, `catchphrases`, `vocabulary_level` |
+| `ab_testing` | `enabled`, `variants_count`, `min_data_points` |
+| `analytics` | `enabled`, `youtube_analytics`, `fetch_delay_hours` |
+| `playlists` | `enabled`, `auto_create`, `min_videos_for_playlist`, `naming_template` |
+| `orchestration` | `engine` (simple) |
 
 ---
 
-## Database Schema (SQLite)
+## Database Schema (SQLite — `data/pipeline.db`)
 
 ```
 videos       → id, video_id, platform, language, topic, category, title, upload_date
@@ -448,39 +439,16 @@ quota_usage  → id, provider, date, units_used
 
 | Error | Handling |
 |-------|----------|
-| API rate limits | Token-bucket rate limiter blocks until safe |
-| Replicate 429 | Retry with 15s × attempt backoff, max 5 attempts |
-| edge-tts NoAudioReceived | Switch to OpenAI TTS (`tts.provider: openai`) |
-| YouTube invalid_scope | Delete token.json to force OAuth re-authorization |
-| YouTube invalid tags | Sanitize: remove special chars, max 10 tags, 30-char limit |
-| YouTube upload fails | Graceful catch, log error, continue pipeline |
+| Replicate 429 / rate limit | Retry with 15s × attempt backoff, max 5 attempts |
+| edge-tts SSML parse error | `_sanitize_tts_text()` strips `&`, `<`, `>`, smart quotes |
+| edge-tts NoAudioReceived | Retry up to 4 times; last attempt drops prosody tags |
+| YouTube `uploadLimitExceeded` | Verify channel at youtube.com/verify |
+| YouTube invalid_scope | Delete `token.json`, re-run OAuth flow |
+| OOM kill on EC2 | 2 GB swap + 1280×720 resolution (not 1080p) |
+| MoviePy `Image.ANTIALIAS` missing | Monkey-patched: `Image.ANTIALIAS = Image.LANCZOS` |
+| ImageMagick not installed | Subtitle rendering silently skipped |
 | Email notification fails | Warning printed, pipeline continues |
-| Ken Burns shape mismatch | Use `VideoClip(make_frame)` not `ImageClip(make_frame)` |
-| Pillow ANTIALIAS removed | Monkey-patch: `Image.ANTIALIAS = Image.LANCZOS` |
-| ImageMagick not installed | Subtitle rendering falls back to no-subtitle mode |
-| Shorts script fails | Falls back to original truncation approach |
-| A/B variant fails | Falls back to original metadata |
-| Playlist creation fails | Skipped, video still uploads normally |
-
----
-
-## CLI Usage
-
-```bash
-# Local development
-python main.py                          # Regular pipeline: generate + upload
-python main.py --no-upload              # Generate only (no YouTube upload)
-python main.py --animated               # Animated cartoon pipeline + upload
-python main.py --animated --no-upload   # Animated, no upload (test mode)
-python main.py --schedule               # Scheduler: regular pipeline (all 7 days)
-python main.py --schedule --animated    # Scheduler: animated pipeline (all 7 days)
-python main.py --prefect                # Prefect orchestration
-python main.py --prefect --animated     # Prefect + animated
-python main.py --help                   # Show usage
-
-# On EC2 (cron runs these automatically)
-python main.py --animated               # 9 AM IST + 9 PM IST via crontab
-```
+| Playlist creation fails | Skipped, video uploads normally |
 
 ---
 
@@ -490,39 +458,48 @@ python main.py --animated               # 9 AM IST + 9 PM IST via crontab
 
 ```bash
 # 1. SSH into EC2
-ssh -i ~/.ssh/youtube-automation.pem ubuntu@YOUR_ELASTIC_IP
+ssh -i ~/.ssh/youtube-automation.pem -o ServerAliveInterval=60 ubuntu@YOUR_ELASTIC_IP
 
 # 2. Install system dependencies
 sudo apt update && sudo apt install -y python3 python3-pip python3-venv ffmpeg git imagemagick
 sudo timedatectl set-timezone Asia/Kolkata
 timedatectl   # verify: IST (UTC+0530)
 
-# 3. Clone repo and install Python dependencies
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git ~/youtube_automation
+# 3. Add swap (prevent OOM during video encoding)
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+# 4. Clone repo and install Python dependencies
+git clone https://github.com/YOUR_USERNAME/Youtube_Automation.git ~/youtube_automation
 cd ~/youtube_automation
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 mkdir -p logs
 
-# 4. Upload secret files (run from your Mac)
+# 5. Upload secret files (run from your Mac)
 scp -i ~/.ssh/youtube-automation.pem config.yaml ubuntu@YOUR_ELASTIC_IP:~/youtube_automation/
 scp -i ~/.ssh/youtube-automation.pem client_secrets.json ubuntu@YOUR_ELASTIC_IP:~/youtube_automation/
 scp -i ~/.ssh/youtube-automation.pem token.json ubuntu@YOUR_ELASTIC_IP:~/youtube_automation/
 
-# 5. Test pipeline manually
-source ~/youtube_automation/venv/bin/activate
-cd ~/youtube_automation
-python main.py --animated --no-upload   # test without upload first
-python main.py --animated               # full test: generate + upload + email
+# 6. Download background music library
+cd ~/youtube_automation && ./venv/bin/python main.py --generate-music
 
-# 6. Set up cron (twice daily at 9 AM + 9 PM IST)
+# 7. Test pipeline manually
+./venv/bin/python main.py --video --no-upload    # test without upload
+./venv/bin/python main.py --shorts --no-upload   # test shorts without upload
+./venv/bin/python main.py --video                # full test: generate + upload + email
+
+# 8. Set up cron (video at 9 AM + shorts at 9 PM IST)
 crontab -e
 # Add these two lines:
-0  9 * * * cd $HOME/youtube_automation && ./venv/bin/python main.py --animated >> logs/run.log 2>&1
-0 21 * * * cd $HOME/youtube_automation && ./venv/bin/python main.py --animated >> logs/run.log 2>&1
+0  9 * * * cd $HOME/youtube_automation && ./venv/bin/python main.py --video  >> logs/run.log 2>&1
+0 21 * * * cd $HOME/youtube_automation && ./venv/bin/python main.py --shorts >> logs/run.log 2>&1
 
-# 7. Create deploy key for GitHub Actions
+# 9. Create deploy key for GitHub Actions
 ssh-keygen -t ed25519 -f ~/.ssh/github_deploy -N ""
 cat ~/.ssh/github_deploy.pub >> ~/.ssh/authorized_keys
 cat ~/.ssh/github_deploy   # copy this — paste as EC2_SSH_KEY GitHub Secret
@@ -536,6 +513,8 @@ Go to: GitHub repo → Settings → Secrets and variables → Actions → New re
 |--------|-------|
 | `EC2_HOST` | Your Elastic IP address |
 | `EC2_SSH_KEY` | Contents of `~/.ssh/github_deploy` (private key) |
+| `GMAIL_SENDER` | Gmail address for deploy notifications |
+| `GMAIL_APP_PASSWORD` | 16-char Gmail App Password |
 
 ### Verify Everything Works
 
@@ -549,13 +528,16 @@ tail -f ~/youtube_automation/logs/run.log
 # Check last git pull (CI/CD test)
 git log -1 --oneline
 
-# Test email
+# Test email notification
 cd ~/youtube_automation && source venv/bin/activate
 python3 -c "
 import yaml; from agents.notification_agent import send_run_summary
 c = yaml.safe_load(open('config.yaml'))
-send_run_summary(c, {'timestamp':'test','run_dir':'/tmp','videos':[{'language':'English','video_url':'https://youtu.be/test','shorts_url':None}]})
+send_run_summary(c, {'timestamp':'test','run_dir':'/tmp','videos':[{'language':'Hindi','video_url':'https://youtu.be/test','shorts_url':None}]})
 "
+
+# Check music library
+ls -lh data/music/   # should show 10+ .mp3 files
 ```
 
 ---
@@ -563,12 +545,12 @@ send_run_summary(c, {'timestamp':'test','run_dir':'/tmp','videos':[{'language':'
 ## Setup Requirements
 
 1. **Python 3.10+** with virtual environment
-2. **API Keys:** OpenAI (TTS + GPT), Replicate (image generation)
-3. **Google Cloud:** OAuth 2.0 credentials for YouTube Data API v3 (`client_secrets.json`)
+2. **API Keys:** OpenAI (GPT-4o-mini), Replicate (Flux Schnell image generation)
+3. **Google Cloud:** OAuth 2.0 credentials for YouTube Data API v3 (`client_secrets.json` + `token.json`)
 4. **Gmail App Password:** 16-char app password (Google Account → Security → 2-Step Verification → App Passwords)
-5. **AWS EC2:** t4g.small ARM64 instance with Elastic IP
-6. **GitHub Secrets:** `EC2_HOST` + `EC2_SSH_KEY` for CI/CD
-7. **ffmpeg:** Required by MoviePy (install via apt on EC2)
-8. **ImageMagick:** Optional, for subtitle text rendering on videos
-9. **ElevenLabs API Key:** Optional, only if `tts.provider: elevenlabs`
-10. **Prefect:** Optional, `pip install prefect` only if using `--prefect` mode
+5. **AWS EC2:** t4g.small ARM64 instance with Elastic IP + 2 GB swap
+6. **GitHub Secrets:** `EC2_HOST` + `EC2_SSH_KEY` + `GMAIL_SENDER` + `GMAIL_APP_PASSWORD`
+7. **ffmpeg:** Required by MoviePy (`sudo apt install ffmpeg`)
+8. **ImageMagick:** Optional, for subtitle text rendering (`sudo apt install imagemagick`)
+9. **Background music:** Run `python main.py --generate-music` once after setup
+10. **YouTube channel verification:** Required for upload quota — verify at youtube.com/verify
