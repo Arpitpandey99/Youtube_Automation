@@ -341,13 +341,28 @@ def _add_subtitles_to_clip(clip, narration_text: str, config: dict,
         return clip
 
 
-def _add_bg_music(final_clip, config: dict):
-    """Add background music to a clip if music files are available."""
-    music_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "music")
-    music_files = [f for f in os.listdir(music_dir) if f.endswith((".mp3", ".wav"))] if os.path.exists(music_dir) else []
+def _add_bg_music(final_clip, config: dict, lang_dir: str = None):
+    """Add background music to a clip. Uses AI-generated music if configured, else local files."""
+    bg_music_path = None
+    bg_cfg = config.get("bg_music", {})
 
-    if music_files:
-        bg_music_path = os.path.join(music_dir, random.choice(music_files))
+    # Try AI-generated music first
+    if bg_cfg.get("provider") == "replicate" and lang_dir:
+        cached = os.path.join(lang_dir, "bg_music.mp3")
+        if os.path.exists(cached):
+            bg_music_path = cached
+        else:
+            from agents.asset_agent import generate_bg_music_ai
+            bg_music_path = generate_bg_music_ai(config, cached)
+
+    # Fall back to local music files
+    if not bg_music_path:
+        music_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "music")
+        music_files = [f for f in os.listdir(music_dir) if f.endswith((".mp3", ".wav"))] if os.path.exists(music_dir) else []
+        if music_files:
+            bg_music_path = os.path.join(music_dir, random.choice(music_files))
+
+    if bg_music_path:
         bg_music = AudioFileClip(bg_music_path).volumex(config["video"]["bg_music_volume"])
         if bg_music.duration < final_clip.duration:
             loops = int(final_clip.duration / bg_music.duration) + 1
@@ -405,7 +420,7 @@ def assemble_animated_video(config: dict, script_data: dict,
             scene_clips[i] = scene_clips[i].crossfadeout(t)
 
     final = concatenate_videoclips(scene_clips, method="compose", padding=-t)
-    final = _add_bg_music(final, config)
+    final = _add_bg_music(final, config, lang_dir=output_dir)
 
     output_path = os.path.join(output_dir, "final_video.mp4")
     final.write_videofile(
@@ -525,7 +540,7 @@ def assemble_animated_shorts(config: dict, script_data: dict,
     if final.duration > max_duration:
         final = final.subclip(0, max_duration)
 
-    final = _add_bg_music(final, config)
+    final = _add_bg_music(final, config, lang_dir=output_dir)
 
     output_path = os.path.join(output_dir, "shorts_video.mp4")
     final.write_videofile(

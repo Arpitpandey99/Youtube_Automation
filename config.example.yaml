@@ -21,23 +21,19 @@ pexels:
 
 # TTS configuration
 tts:
-  provider: "edge-tts"  # options: "edge-tts", "openai", "elevenlabs"
+  provider: "edge-tts"  # options: "edge-tts" (Indian voices), "openai", "elevenlabs"
   openai_voice: "nova"
   elevenlabs_api_key: "YOUR_ELEVENLABS_API_KEY"
   elevenlabs_voice_id: "YOUR_ELEVENLABS_VOICE_ID"
 
-# Language configuration - pipeline runs for each language
+# Language configuration — Hinglish only (Indian accent voices)
 languages:
-  - code: "en"
-    name: "English"
-    voices:
-      - "en-US-JennyNeural"      # most natural, warm storyteller
-      - "en-US-AriaNeural"       # expressive, great for kids content
-      - "en-US-SaraNeural"       # friendly, clear enunciation
   - code: "hi"
     name: "Hindi"
     voices:
-      - "hi-IN-SwaraNeural"      # expressive female, best for Hinglish
+      - "en-IN-NeerjaNeural"            # Indian English female — warm, natural Hinglish
+      - "en-IN-NeerjaExpressiveNeural"  # Indian English female — expressive, kids-friendly
+      - "hi-IN-SwaraNeural"             # Hindi female — natural Hinglish storyteller
 
 # YouTube configuration
 youtube:
@@ -61,7 +57,7 @@ content:
   target_age: "3-8"
   video_duration_minutes: 3
   scenes_per_video: 6
-  image_style: "realistic, high quality photograph, vibrant colors, kid-friendly, visually appealing, professional photography"
+  image_style: "soft watercolor illustration, smooth edges, pastel colors, gentle dreamy look, kid-friendly, no sharp lines, no text, no words"
 
 # Scheduler
 schedule:
@@ -103,10 +99,10 @@ playlists:
   min_videos_for_playlist: 3
   naming_template: "{category} for Kids - {language}"
 
-# Animation settings (for --animated pipeline)
+# Animation settings (for --video and --shorts pipeline)
 animation:
   provider: "kenburns"  # options: "kenburns" (free), "ai" (uses Replicate ~$0.20/scene)
-  image_style: "colorful cartoon illustration, animated style, vibrant colors, kid-friendly, Pixar-like, clean lines, no text, no words"
+  image_style: "soft cartoon illustration, smooth gentle colors, dreamy pastel tones, kid-friendly, soft edges, Pixar-like warmth, no text, no words"
   kenburns:
     zoom_ratio: 0.04        # how much to zoom per second
     effects: ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "combined"]
@@ -114,6 +110,13 @@ animation:
     model: "wan-video/wan-2.5-i2v-fast"  # Replicate model for image-to-video
     duration: 5              # seconds per generated clip
     resolution: "720p"
+
+# AI background music — generated via Replicate musicgen (or use local files)
+bg_music:
+  provider: "local"       # options: "replicate" (AI per run), "local" (pre-generated, data/music/)
+  replicate_model: "meta/musicgen"
+  prompt: "gentle playful kids background music, soft happy melody, educational, warm, no lyrics, loopable"
+  duration: 30            # seconds — auto-looped to fit video length
 
 # Email notifications — sent after each pipeline run with video links
 notifications:

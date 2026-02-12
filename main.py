@@ -1,11 +1,12 @@
 """
 YouTube Kids Video Automation - Main Orchestrator
-Generates and uploads kid-friendly YouTube videos automatically.
+Hinglish content pipeline: --video (2-3 min) or --shorts (~1 min)
 """
 
 import os
 import sys
 import json
+import copy
 import shutil
 import yaml
 import schedule
@@ -13,27 +14,23 @@ import time
 from datetime import datetime
 
 from agents.topic_agent import generate_topic
-from agents.script_agent import generate_script, generate_shorts_script, translate_script
-from agents.asset_agent import generate_assets, generate_voiceover_only, pick_voice, generate_images
-from agents.video_agent import (
-    assemble_video, assemble_shorts,
-    assemble_animated_video, assemble_animated_shorts,
-)
+from agents.script_agent import generate_script, generate_shorts_script
+from agents.asset_agent import generate_images, generate_voiceover_only, pick_voice
+from agents.video_agent import assemble_animated_video, assemble_animated_shorts
 from agents.animation_agent import animate_all_scenes
 from agents.metadata_agent import (
-    generate_metadata, generate_youtube_thumbnail, generate_instagram_thumbnail,
-    generate_shorts_thumbnail, generate_shorts_metadata, generate_instagram_metadata,
+    generate_metadata, generate_youtube_thumbnail,
+    generate_shorts_thumbnail, generate_shorts_metadata,
 )
 from agents.upload_agent import upload_video, upload_captions
-from agents.instagram_agent import build_reel_caption
 from agents.caption_agent import generate_srt
-from agents.db import init_db, insert_video, update_video_shorts, update_video_ig
-from agents.ab_agent import generate_ab_variants, pick_variant, apply_variant_to_metadata
-from agents.playlist_agent import get_or_create_playlist, add_to_playlist
-from agents.analytics_agent import fetch_and_store_metrics, get_pending_analytics_videos
+from agents.db import init_db, insert_video, update_video_shorts
+from agents.notification_agent import send_run_summary
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
+LANG_CODE = "hi"
+LANG_NAME = "Hindi"   # triggers Hinglish mode in script_agent
 
 
 def load_config():
@@ -49,516 +46,142 @@ def log_run(run_dir: str, step: str, status: str, data: dict = None):
             log = json.load(f)
     else:
         log = {"started_at": datetime.now().isoformat(), "steps": {}}
-
     log["steps"][step] = {
         "status": status,
         "timestamp": datetime.now().isoformat(),
         "data": data,
     }
-
     with open(log_file, "w") as f:
         json.dump(log, f, indent=2)
 
 
-def run_pipeline(config: dict, upload: bool = True):
-    """Execute the full video generation pipeline for all configured languages."""
-    # Initialize database
-    init_db()
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(BASE_DIR, "output", timestamp)
-    os.makedirs(run_dir, exist_ok=True)
-
-    languages = config.get("languages", [{"code": "en", "name": "English", "voices": ["en-US-AnaNeural"]}])
-
-    print(f"\n{'='*60}")
-    print(f"  YouTube Video Pipeline - {timestamp}")
-    print(f"  Languages: {', '.join(l['name'] for l in languages)}")
-    print(f"{'='*60}\n")
-
-    try:
-        # Fetch pending analytics from previous runs
-        analytics_enabled = config.get("analytics", {}).get("enabled", False)
-        if analytics_enabled:
-            print("[0] Fetching analytics for previous videos...")
-            pending = get_pending_analytics_videos(config)
-            for v in pending[:5]:
-                try:
-                    fetch_and_store_metrics(config, v["video_id"], v["platform"])
-                except Exception as e:
-                    print(f"  Analytics fetch failed for {v['video_id']}: {e}")
-
-        # Step 1: Generate Topic (shared across languages)
-        print("[1] Generating topic...")
-        topic_data = generate_topic(config)
-        print(f"  Topic: {topic_data['topic']}")
-        log_run(run_dir, "topic", "success", topic_data)
-
-        # Step 2: Generate English script first (needed for image generation)
-        print("[2] Writing English script (for image prompts)...")
-        en_script = generate_script(config, topic_data, language="English")
-        print(f"  Title: {en_script['title']}")
-        print(f"  Scenes: {len(en_script['scenes'])}")
-        log_run(run_dir, "script_en", "success", en_script)
-
-        with open(os.path.join(run_dir, "script_en.json"), "w") as f:
-            json.dump(en_script, f, indent=2)
-
-        # Step 3: Generate images once (shared across all languages)
-        print("[3] Generating images (shared across languages)...")
-        image_dir = os.path.join(run_dir, "images")
-        os.makedirs(image_dir, exist_ok=True)
-        image_files = generate_images(config, en_script, image_dir)
-        log_run(run_dir, "images", "success", {"image_count": len(image_files)})
-
-        # Process each language
-        for lang_idx, lang in enumerate(languages):
-            lang_code = lang["code"]
-            lang_name = lang["name"]
-            lang_prefix = f"[{lang_name}]"
-
-            print(f"\n{'─'*60}")
-            print(f"  Processing: {lang_name} ({lang_code})")
-            print(f"{'─'*60}")
-
-            lang_dir = os.path.join(run_dir, lang_code)
-            os.makedirs(lang_dir, exist_ok=True)
-
-            # Generate script for this language (reuse English script if English)
-            if lang_code == "en":
-                script_data = en_script
-            else:
-                print(f"  {lang_prefix} Translating script from English...")
-                script_data = translate_script(config, en_script, language=lang_name)
-                print(f"  {lang_prefix} Title: {script_data['title']}")
-                log_run(run_dir, f"script_{lang_code}", "success", script_data)
-
-                with open(os.path.join(run_dir, f"script_{lang_code}.json"), "w") as f:
-                    json.dump(script_data, f, indent=2, ensure_ascii=False)
-
-            # Pick a random voice for this language
-            voice = pick_voice(config, lang_code)
-
-            # Generate voiceover
-            print(f"  {lang_prefix} Generating voiceover...")
-            audio_dir = os.path.join(lang_dir, "audio")
-            os.makedirs(audio_dir, exist_ok=True)
-            audio_files = generate_voiceover_only(config, script_data, lang_dir, voice=voice)
-            log_run(run_dir, f"voiceover_{lang_code}", "success", {
-                "voice": voice, "audio_count": len(audio_files),
-            })
-
-            assets = {"audio_files": audio_files, "image_files": image_files}
-
-            # Generate captions/SRT
-            print(f"  {lang_prefix} Generating captions...")
-            srt_path = generate_srt(script_data, audio_files, lang_dir, language=lang_code)
-            log_run(run_dir, f"captions_{lang_code}", "success", {"path": srt_path})
-
-            # Assemble full video
-            print(f"  {lang_prefix} Assembling video...")
-            video_path = assemble_video(config, script_data, assets, lang_dir)
-            print(f"  {lang_prefix} Video saved: {video_path}")
-            log_run(run_dir, f"video_{lang_code}", "success", {"path": video_path})
-
-            # Generate metadata
-            print(f"  {lang_prefix} Generating metadata...")
-            metadata = generate_metadata(config, topic_data, script_data, language=lang_name)
-
-            # A/B testing
-            ab_enabled = config.get("ab_testing", {}).get("enabled", False)
-            chosen_variant = None
-            if ab_enabled:
-                print(f"  {lang_prefix} Generating A/B variants...")
-                try:
-                    variants = generate_ab_variants(config, topic_data, script_data, metadata, lang_name)
-                    # We'll pick the variant after we have a db_id for the video
-                except Exception as e:
-                    print(f"  {lang_prefix} A/B variant generation failed: {e}")
-                    variants = None
-
-            # Generate thumbnails (platform-specific)
-            print(f"  {lang_prefix} Generating thumbnails...")
-            yt_thumb = generate_youtube_thumbnail(config, metadata, image_files[0], lang_dir)
-            ig_thumb = generate_instagram_thumbnail(config, metadata, image_files[0], lang_dir)
-            shorts_thumb = generate_shorts_thumbnail(config, metadata, image_files[0], lang_dir)
-
-            print(f"  {lang_prefix} Title: {metadata['title']}")
-            log_run(run_dir, f"metadata_{lang_code}", "success", metadata)
-
-            with open(os.path.join(lang_dir, "metadata.json"), "w") as f:
-                json.dump(metadata, f, indent=2, ensure_ascii=False)
-
-            # Upload full video
-            video_id = None
-            db_id = None
-            if upload:
-                try:
-                    print(f"  {lang_prefix} Uploading video...")
-
-                    # Apply A/B variant if available
-                    upload_metadata = metadata
-                    if ab_enabled and variants:
-                        # Create a temporary db_id=0, update after insert
-                        chosen_variant = pick_variant(config, variants, 0)
-                        upload_metadata = apply_variant_to_metadata(metadata, chosen_variant)
-
-                    video_url, video_id = upload_video(config, video_path, upload_metadata, yt_thumb)
-                    log_run(run_dir, f"upload_{lang_code}", "success", {"url": video_url})
-                    print(f"  {lang_prefix} Video live at: {video_url}")
-
-                    # Upload captions
-                    if video_id and srt_path:
-                        upload_captions(config, video_id, srt_path, language=lang_code)
-
-                    # Store in database
-                    db_id = insert_video(
-                        video_id=video_id, platform="youtube", language=lang_code,
-                        topic=topic_data["topic"], category=topic_data["category"],
-                        title=upload_metadata["title"], run_dir=run_dir,
-                    )
-
-                    # Playlist automation
-                    playlists_enabled = config.get("playlists", {}).get("enabled", False)
-                    if playlists_enabled:
-                        try:
-                            playlist_id = get_or_create_playlist(config, topic_data["category"], lang_name)
-                            if playlist_id:
-                                add_to_playlist(config, video_id, playlist_id)
-                        except Exception as e:
-                            print(f"  {lang_prefix} Playlist failed: {e}")
-
-                except Exception as e:
-                    print(f"  {lang_prefix} Upload failed: {e}")
-                    log_run(run_dir, f"upload_{lang_code}", "failed", {"error": str(e)})
-            else:
-                print(f"  {lang_prefix} Upload skipped (--no-upload mode)")
-                log_run(run_dir, f"upload_{lang_code}", "skipped")
-
-            # Generate re-hooked Shorts script
-            print(f"  {lang_prefix} Creating YouTube Shorts...")
-            shorts_script = None
-            shorts_audio = None
-            try:
-                shorts_script = generate_shorts_script(config, topic_data, script_data, lang_name)
-                print(f"  {lang_prefix} Re-hooked shorts script generated")
-                shorts_audio = generate_voiceover_only(config, shorts_script, lang_dir, voice=voice)
-            except Exception as e:
-                print(f"  {lang_prefix} Shorts script/audio fallback to original: {e}")
-
-            shorts_path = assemble_shorts(
-                config, script_data, assets, lang_dir,
-                shorts_script=shorts_script, shorts_audio_files=shorts_audio,
-            )
-            shorts_metadata = generate_shorts_metadata(metadata)
-            log_run(run_dir, f"shorts_{lang_code}", "success", {"path": shorts_path})
-
-            # Upload Shorts
-            if upload:
-                try:
-                    print(f"  {lang_prefix} Uploading Shorts...")
-                    shorts_url, shorts_vid = upload_video(config, shorts_path, shorts_metadata, shorts_thumb)
-                    log_run(run_dir, f"shorts_upload_{lang_code}", "success", {"url": shorts_url})
-                    print(f"  {lang_prefix} Shorts live at: {shorts_url}")
-
-                    if db_id and shorts_vid:
-                        update_video_shorts(db_id, shorts_vid)
-                except Exception as e:
-                    print(f"  {lang_prefix} Shorts upload failed: {e}")
-                    log_run(run_dir, f"shorts_upload_{lang_code}", "failed", {"error": str(e)})
-            else:
-                print(f"  {lang_prefix} Shorts upload skipped")
-                log_run(run_dir, f"shorts_upload_{lang_code}", "skipped")
-
-            # Save Instagram Reel assets to a folder (manual upload)
-            ig_enabled = config.get("instagram", {}).get("enabled", False)
-            if ig_enabled:
-                try:
-                    print(f"  {lang_prefix} Preparing Instagram assets...")
-                    ig_dir = os.path.join(lang_dir, "instagram")
-                    os.makedirs(ig_dir, exist_ok=True)
-
-                    ig_metadata = generate_instagram_metadata(config, topic_data, script_data, lang_name)
-                    reel_caption = build_reel_caption(metadata, language=lang_name, ig_metadata=ig_metadata)
-
-                    # Copy reel video
-                    ig_video_path = os.path.join(ig_dir, "reel.mp4")
-                    shutil.copy2(shorts_path, ig_video_path)
-
-                    # Copy thumbnail
-                    if ig_thumb and os.path.exists(ig_thumb):
-                        shutil.copy2(ig_thumb, os.path.join(ig_dir, "thumbnail.png"))
-
-                    # Save caption
-                    with open(os.path.join(ig_dir, "caption.txt"), "w", encoding="utf-8") as f:
-                        f.write(reel_caption)
-
-                    # Save full IG metadata
-                    with open(os.path.join(ig_dir, "metadata.json"), "w", encoding="utf-8") as f:
-                        json.dump(ig_metadata, f, indent=2, ensure_ascii=False)
-
-                    log_run(run_dir, f"instagram_{lang_code}", "saved", {"path": ig_dir})
-                    print(f"  {lang_prefix} Instagram assets saved to: {ig_dir}")
-                except Exception as e:
-                    print(f"  {lang_prefix} Instagram asset prep failed: {e}")
-                    log_run(run_dir, f"instagram_{lang_code}", "failed", {"error": str(e)})
-            else:
-                print(f"  {lang_prefix} Instagram skipped (disabled in config)")
-
-            # Cleanup language-specific large files after upload
-            if upload:
-                print(f"  {lang_prefix} Cleaning up...")
-                audio_folder = os.path.join(lang_dir, "audio")
-                if os.path.exists(audio_folder):
-                    shutil.rmtree(audio_folder)
-                for f in ["final_video.mp4", "shorts_video.mp4", "thumbnail.png",
-                           "thumbnail_ig.png", "thumbnail_shorts.png"]:
-                    fpath = os.path.join(lang_dir, f)
-                    if os.path.exists(fpath):
-                        os.remove(fpath)
-
-        # Cleanup shared images (including _vertical.png temp files) after all languages
-        if upload:
-            print("\n  Cleaning up shared images...")
-            if os.path.exists(image_dir):
-                shutil.rmtree(image_dir)
-            print("  Cleanup done. Kept: run_log.json, scripts, metadata, captions")
-
-        print(f"\n{'='*60}")
-        print(f"  Pipeline completed successfully!")
-        print(f"  Languages: {len(languages)} | Videos: {len(languages) * 2} (full + shorts)")
-        print(f"  Output: {run_dir}")
-        print(f"{'='*60}\n")
-
-    except Exception as e:
-        print(f"\n  ERROR: {e}")
-        log_run(run_dir, "error", "failed", {"error": str(e)})
-        raise
-
-
-def run_animated_pipeline(config: dict, upload: bool = True) -> dict:
-    """Execute the animated cartoon video pipeline for all configured languages."""
-    from agents.notification_agent import send_run_summary
-    import copy
-    config = copy.deepcopy(config)
-
-    # Override image style for cartoon look
-    anim_config = config.get("animation", {})
-    config["content"]["image_style"] = anim_config.get(
+def _prepare_config(config: dict) -> dict:
+    """Deep-copy config and apply soft animation image style override."""
+    cfg = copy.deepcopy(config)
+    anim_style = cfg.get("animation", {}).get(
         "image_style",
-        "colorful cartoon illustration, animated style, vibrant colors, "
-        "kid-friendly, Pixar-like, clean lines, no text"
+        "soft cartoon illustration, smooth gentle colors, dreamy pastel tones, "
+        "kid-friendly, soft edges, Pixar-like warmth, no text, no words",
     )
+    cfg["content"]["image_style"] = anim_style
+    return cfg
 
+
+def _cleanup(lang_dir: str, image_dir: str):
+    """Remove large intermediate files after a successful upload."""
+    for folder in ["audio", "animated_clips"]:
+        p = os.path.join(lang_dir, folder)
+        if os.path.exists(p):
+            shutil.rmtree(p)
+    if os.path.exists(image_dir):
+        shutil.rmtree(image_dir)
+
+
+# ── Video pipeline (2–3 min landscape) ───────────────────────────────────────
+
+def run_video_pipeline(config: dict, upload: bool = True) -> dict:
+    """Generate a 2–3 min animated Hinglish video and upload to YouTube."""
+    config = _prepare_config(config)
     init_db()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(BASE_DIR, "output", f"animated_{timestamp}")
-    os.makedirs(run_dir, exist_ok=True)
+    run_dir   = os.path.join(BASE_DIR, "output", f"video_{timestamp}")
+    lang_dir  = os.path.join(run_dir, LANG_CODE)
+    image_dir = os.path.join(run_dir, "images")
+    os.makedirs(lang_dir, exist_ok=True)
+    os.makedirs(image_dir, exist_ok=True)
 
-    languages = config.get("languages", [{"code": "en", "name": "English", "voices": ["en-US-AnaNeural"]}])
-    provider = anim_config.get("provider", "kenburns")
     run_summary = {"run_dir": run_dir, "timestamp": timestamp, "videos": []}
+    result      = {"language": LANG_NAME, "language_code": LANG_CODE,
+                   "video_url": None, "shorts_url": None}
 
     print(f"\n{'='*60}")
-    print(f"  Animated Video Pipeline - {timestamp}")
-    print(f"  Animation: {provider}")
-    print(f"  Languages: {', '.join(l['name'] for l in languages)}")
+    print(f"  Video Pipeline (Hinglish) — {timestamp}")
     print(f"{'='*60}\n")
 
     try:
-        # Step 1: Topic
+        # 1. Topic
         print("[1] Generating topic...")
         topic_data = generate_topic(config)
         print(f"  Topic: {topic_data['topic']}")
         log_run(run_dir, "topic", "success", topic_data)
 
-        # Step 2: English script
-        print("[2] Writing English script...")
-        en_script = generate_script(config, topic_data, language="English")
-        print(f"  Title: {en_script['title']}")
-        print(f"  Scenes: {len(en_script['scenes'])}")
-        log_run(run_dir, "script_en", "success", en_script)
+        # 2. Hinglish script (visual_description stays in English for AI image prompts)
+        print("[2] Writing Hinglish script...")
+        script_data = generate_script(config, topic_data, language=LANG_NAME)
+        print(f"  Title: {script_data['title']}")
+        print(f"  Scenes: {len(script_data['scenes'])}")
+        log_run(run_dir, "script", "success", script_data)
+        with open(os.path.join(run_dir, "script.json"), "w") as f:
+            json.dump(script_data, f, indent=2, ensure_ascii=False)
 
-        with open(os.path.join(run_dir, "script_en.json"), "w") as f:
-            json.dump(en_script, f, indent=2)
+        # 3. Generate soft/dreamy images
+        print("[3] Generating images...")
+        image_files = generate_images(config, script_data, image_dir)
+        log_run(run_dir, "images", "success", {"count": len(image_files)})
 
-        # Step 3: Generate cartoon-style images
-        print("[3] Generating cartoon images...")
-        image_dir = os.path.join(run_dir, "images")
-        os.makedirs(image_dir, exist_ok=True)
-        image_files = generate_images(config, en_script, image_dir)
-        log_run(run_dir, "images", "success", {"image_count": len(image_files)})
+        # 4. Indian accent voiceover
+        voice = pick_voice(config, LANG_CODE)
+        print("[4] Generating Hinglish voiceover...")
+        audio_files = generate_voiceover_only(config, script_data, lang_dir, voice=voice)
+        log_run(run_dir, "voiceover", "success", {"voice": voice})
 
-        # Process each language
-        for lang in languages:
-            lang_code = lang["code"]
-            lang_name = lang["name"]
-            lang_prefix = f"[{lang_name}]"
+        # 5. Ken Burns animation
+        print("[5] Animating scenes (Ken Burns)...")
+        animated_clips = animate_all_scenes(
+            config, image_files, audio_files, script_data, lang_dir
+        )
+        log_run(run_dir, "animation", "success", {"clips": len(animated_clips)})
 
-            print(f"\n{'─'*60}")
-            print(f"  Processing: {lang_name} ({lang_code})")
-            print(f"{'─'*60}")
+        # 6. Captions / SRT
+        print("[6] Generating captions...")
+        srt_path = generate_srt(script_data, audio_files, lang_dir, language=LANG_CODE)
 
-            lang_dir = os.path.join(run_dir, lang_code)
-            os.makedirs(lang_dir, exist_ok=True)
+        # 7. Assemble animated video (landscape 1280×720) + AI background music
+        print("[7] Assembling video...")
+        video_path = assemble_animated_video(
+            config, script_data, animated_clips, audio_files, lang_dir
+        )
+        print(f"  Saved: {video_path}")
+        log_run(run_dir, "video", "success", {"path": video_path})
 
-            lang_result = {"language": lang_name, "language_code": lang_code,
-                           "video_url": None, "shorts_url": None}
+        # 8. Metadata + thumbnail
+        print("[8] Generating metadata...")
+        metadata = generate_metadata(config, topic_data, script_data, language=LANG_NAME)
+        yt_thumb  = generate_youtube_thumbnail(config, metadata, image_files[0], lang_dir)
+        print(f"  Title: {metadata['title']}")
+        log_run(run_dir, "metadata", "success", metadata)
+        with open(os.path.join(lang_dir, "metadata.json"), "w") as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
 
-            # Script
-            if lang_code == "en":
-                script_data = en_script
-            else:
-                print(f"  {lang_prefix} Translating script...")
-                script_data = translate_script(config, en_script, language=lang_name)
-                print(f"  {lang_prefix} Title: {script_data['title']}")
-                log_run(run_dir, f"script_{lang_code}", "success", script_data)
-                with open(os.path.join(run_dir, f"script_{lang_code}.json"), "w") as f:
-                    json.dump(script_data, f, indent=2, ensure_ascii=False)
-
-            # Voice + Voiceover
-            voice = pick_voice(config, lang_code)
-            print(f"  {lang_prefix} Generating voiceover...")
-            audio_files = generate_voiceover_only(config, script_data, lang_dir, voice=voice)
-            log_run(run_dir, f"voiceover_{lang_code}", "success", {"voice": voice})
-
-            # Step 4: Animate images → video clips
-            print(f"  {lang_prefix} Animating scenes ({provider})...")
-            animated_clips = animate_all_scenes(
-                config, image_files, audio_files, script_data, lang_dir
-            )
-            log_run(run_dir, f"animation_{lang_code}", "success",
-                    {"clip_count": len(animated_clips), "provider": provider})
-
-            # Captions
-            print(f"  {lang_prefix} Generating captions...")
-            srt_path = generate_srt(script_data, audio_files, lang_dir, language=lang_code)
-
-            # Step 5: Assemble animated full video
-            print(f"  {lang_prefix} Assembling animated video...")
-            video_path = assemble_animated_video(
-                config, script_data, animated_clips, audio_files, lang_dir
-            )
-            print(f"  {lang_prefix} Video saved: {video_path}")
-            log_run(run_dir, f"video_{lang_code}", "success", {"path": video_path})
-
-            # Metadata + thumbnails
-            print(f"  {lang_prefix} Generating metadata...")
-            metadata = generate_metadata(config, topic_data, script_data, language=lang_name)
-            yt_thumb = generate_youtube_thumbnail(config, metadata, image_files[0], lang_dir)
-            ig_thumb = generate_instagram_thumbnail(config, metadata, image_files[0], lang_dir)
-            shorts_thumb = generate_shorts_thumbnail(config, metadata, image_files[0], lang_dir)
-
-            print(f"  {lang_prefix} Title: {metadata['title']}")
-            log_run(run_dir, f"metadata_{lang_code}", "success", metadata)
-            with open(os.path.join(lang_dir, "metadata.json"), "w") as f:
-                json.dump(metadata, f, indent=2, ensure_ascii=False)
-
-            # Upload full video
-            video_id = None
-            db_id = None
-            if upload:
-                try:
-                    print(f"  {lang_prefix} Uploading video...")
-                    video_url, video_id = upload_video(config, video_path, metadata, yt_thumb)
-                    lang_result["video_url"] = video_url
-                    log_run(run_dir, f"upload_{lang_code}", "success", {"url": video_url})
-                    print(f"  {lang_prefix} Video live at: {video_url}")
-
-                    if video_id and srt_path:
-                        upload_captions(config, video_id, srt_path, language=lang_code)
-
-                    db_id = insert_video(
-                        video_id=video_id, platform="youtube", language=lang_code,
-                        topic=topic_data["topic"], category=topic_data["category"],
-                        title=metadata["title"], run_dir=run_dir,
-                    )
-                except Exception as e:
-                    print(f"  {lang_prefix} Upload failed: {e}")
-                    log_run(run_dir, f"upload_{lang_code}", "failed", {"error": str(e)})
-            else:
-                print(f"  {lang_prefix} Upload skipped (--no-upload mode)")
-
-            # Shorts (animated)
-            print(f"  {lang_prefix} Creating animated Shorts...")
-            shorts_script = None
-            shorts_audio = None
+        # 9. Upload
+        if upload:
             try:
-                shorts_script = generate_shorts_script(config, topic_data, script_data, lang_name)
-                shorts_audio = generate_voiceover_only(config, shorts_script, lang_dir, voice=voice)
+                print("[9] Uploading to YouTube...")
+                video_url, video_id = upload_video(config, video_path, metadata, yt_thumb)
+                result["video_url"] = video_url
+                log_run(run_dir, "upload", "success", {"url": video_url})
+                print(f"  Live: {video_url}")
+                if video_id and srt_path:
+                    upload_captions(config, video_id, srt_path, language=LANG_CODE)
+                insert_video(
+                    video_id=video_id, platform="youtube", language=LANG_CODE,
+                    topic=topic_data["topic"], category=topic_data["category"],
+                    title=metadata["title"], run_dir=run_dir,
+                )
             except Exception as e:
-                print(f"  {lang_prefix} Shorts script fallback: {e}")
+                print(f"  Upload failed: {e}")
+                log_run(run_dir, "upload", "failed", {"error": str(e)})
+        else:
+            print("[9] Upload skipped (--no-upload mode)")
 
-            shorts_path = assemble_animated_shorts(
-                config, script_data, animated_clips, audio_files, lang_dir,
-                shorts_script=shorts_script, shorts_audio=shorts_audio,
-            )
-            shorts_metadata = generate_shorts_metadata(metadata)
-            log_run(run_dir, f"shorts_{lang_code}", "success", {"path": shorts_path})
+        if upload:
+            _cleanup(lang_dir, image_dir)
 
-            # Upload Shorts
-            if upload:
-                try:
-                    print(f"  {lang_prefix} Uploading Shorts...")
-                    shorts_url, shorts_vid = upload_video(config, shorts_path, shorts_metadata, shorts_thumb)
-                    lang_result["shorts_url"] = shorts_url
-                    log_run(run_dir, f"shorts_upload_{lang_code}", "success", {"url": shorts_url})
-                    print(f"  {lang_prefix} Shorts live at: {shorts_url}")
-                    if db_id and shorts_vid:
-                        update_video_shorts(db_id, shorts_vid)
-                except Exception as e:
-                    print(f"  {lang_prefix} Shorts upload failed: {e}")
-            else:
-                print(f"  {lang_prefix} Shorts upload skipped")
-
-            # Save Instagram assets
-            ig_enabled = config.get("instagram", {}).get("enabled", False)
-            if ig_enabled:
-                try:
-                    print(f"  {lang_prefix} Preparing Instagram assets...")
-                    ig_dir = os.path.join(lang_dir, "instagram")
-                    os.makedirs(ig_dir, exist_ok=True)
-
-                    ig_metadata = generate_instagram_metadata(config, topic_data, script_data, lang_name)
-                    reel_caption = build_reel_caption(metadata, language=lang_name, ig_metadata=ig_metadata)
-
-                    shutil.copy2(shorts_path, os.path.join(ig_dir, "reel.mp4"))
-                    if ig_thumb and os.path.exists(ig_thumb):
-                        shutil.copy2(ig_thumb, os.path.join(ig_dir, "thumbnail.png"))
-                    with open(os.path.join(ig_dir, "caption.txt"), "w", encoding="utf-8") as f:
-                        f.write(reel_caption)
-                    with open(os.path.join(ig_dir, "metadata.json"), "w", encoding="utf-8") as f:
-                        json.dump(ig_metadata, f, indent=2, ensure_ascii=False)
-
-                    log_run(run_dir, f"instagram_{lang_code}", "saved", {"path": ig_dir})
-                    print(f"  {lang_prefix} Instagram assets saved to: {ig_dir}")
-                except Exception as e:
-                    print(f"  {lang_prefix} Instagram asset prep failed: {e}")
-
-            # Cleanup large files after upload
-            if upload:
-                print(f"  {lang_prefix} Cleaning up...")
-                for folder in ["audio", "animated_clips"]:
-                    folder_path = os.path.join(lang_dir, folder)
-                    if os.path.exists(folder_path):
-                        shutil.rmtree(folder_path)
-                for f in ["final_video.mp4", "shorts_video.mp4", "thumbnail.png",
-                           "thumbnail_ig.png", "thumbnail_shorts.png"]:
-                    fpath = os.path.join(lang_dir, f)
-                    if os.path.exists(fpath):
-                        os.remove(fpath)
-
-            run_summary["videos"].append(lang_result)
-
-        # Cleanup shared images
-        if upload and os.path.exists(image_dir):
-            shutil.rmtree(image_dir)
+        run_summary["videos"].append(result)
 
         print(f"\n{'='*60}")
-        print(f"  Animated Pipeline completed!")
-        print(f"  Languages: {len(languages)} | Videos: {len(languages) * 2} (full + shorts)")
-        print(f"  Output: {run_dir}")
+        print(f"  Video Pipeline complete!  Output: {run_dir}")
         print(f"{'='*60}\n")
 
         send_run_summary(config, run_summary)
@@ -570,67 +193,261 @@ def run_animated_pipeline(config: dict, upload: bool = True) -> dict:
         raise
 
 
-def start_scheduler(config: dict, animated: bool = False):
-    """Start the automated scheduler."""
-    upload_days = config["schedule"]["upload_days"]
-    upload_time = config["schedule"]["upload_time"]
-    pipeline_fn = run_animated_pipeline if animated else run_pipeline
-    pipeline_label = "animated" if animated else "regular"
+# ── Shorts pipeline (~1 min vertical) ────────────────────────────────────────
 
+def run_shorts_pipeline(config: dict, upload: bool = True) -> dict:
+    """Generate a ~1 min animated Hinglish Short and upload to YouTube."""
+    config = _prepare_config(config)
+    init_db()
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir   = os.path.join(BASE_DIR, "output", f"shorts_{timestamp}")
+    lang_dir  = os.path.join(run_dir, LANG_CODE)
+    image_dir = os.path.join(run_dir, "images")
+    os.makedirs(lang_dir, exist_ok=True)
+    os.makedirs(image_dir, exist_ok=True)
+
+    run_summary = {"run_dir": run_dir, "timestamp": timestamp, "videos": []}
+    result      = {"language": LANG_NAME, "language_code": LANG_CODE,
+                   "video_url": None, "shorts_url": None}
+
+    print(f"\n{'='*60}")
+    print(f"  Shorts Pipeline (Hinglish) — {timestamp}")
+    print(f"{'='*60}\n")
+
+    try:
+        # 1. Topic
+        print("[1] Generating topic...")
+        topic_data = generate_topic(config)
+        print(f"  Topic: {topic_data['topic']}")
+        log_run(run_dir, "topic", "success", topic_data)
+
+        # 2. Full Hinglish script (for image visual descriptions)
+        print("[2] Writing base Hinglish script...")
+        base_script = generate_script(config, topic_data, language=LANG_NAME)
+        print(f"  Base title: {base_script['title']}")
+        log_run(run_dir, "script_base", "success", base_script)
+
+        # 3. Soft/dreamy images
+        print("[3] Generating images...")
+        image_files = generate_images(config, base_script, image_dir)
+        log_run(run_dir, "images", "success", {"count": len(image_files)})
+
+        # 4. Shorts-optimised script (punchy, 3 scenes, ~1 min)
+        print("[4] Writing Shorts script (punchy, ~1 min)...")
+        script_data = generate_shorts_script(config, topic_data, base_script, LANG_NAME)
+        print(f"  Shorts title: {script_data['title']}")
+        print(f"  Scenes: {len(script_data['scenes'])}")
+        log_run(run_dir, "script_shorts", "success", script_data)
+        with open(os.path.join(run_dir, "script.json"), "w") as f:
+            json.dump(script_data, f, indent=2, ensure_ascii=False)
+
+        # 5. Indian accent voiceover for shorts script
+        voice = pick_voice(config, LANG_CODE)
+        print("[5] Generating Hinglish voiceover...")
+        shorts_audio = generate_voiceover_only(config, script_data, lang_dir, voice=voice)
+        log_run(run_dir, "voiceover", "success", {"voice": voice})
+
+        # 6. Ken Burns animation (using base_script for scene-image mapping)
+        print("[6] Animating scenes (Ken Burns)...")
+        animated_clips = animate_all_scenes(
+            config, image_files, shorts_audio, base_script, lang_dir
+        )
+        log_run(run_dir, "animation", "success", {"clips": len(animated_clips)})
+
+        # 7. Assemble vertical Shorts (1080×1920) + AI background music
+        print("[7] Assembling Shorts video (vertical)...")
+        shorts_path = assemble_animated_shorts(
+            config, base_script, animated_clips, shorts_audio, lang_dir,
+            shorts_script=script_data, shorts_audio=shorts_audio,
+        )
+        print(f"  Saved: {shorts_path}")
+        log_run(run_dir, "shorts_video", "success", {"path": shorts_path})
+
+        # 8. Metadata + thumbnail
+        print("[8] Generating metadata...")
+        metadata        = generate_metadata(config, topic_data, script_data, language=LANG_NAME)
+        shorts_metadata = generate_shorts_metadata(metadata)
+        thumb           = generate_shorts_thumbnail(config, metadata, image_files[0], lang_dir)
+        print(f"  Title: {shorts_metadata['title']}")
+        log_run(run_dir, "metadata", "success", shorts_metadata)
+        with open(os.path.join(lang_dir, "metadata.json"), "w") as f:
+            json.dump(shorts_metadata, f, indent=2, ensure_ascii=False)
+
+        # 9. Upload
+        if upload:
+            try:
+                print("[9] Uploading to YouTube Shorts...")
+                shorts_url, shorts_vid = upload_video(
+                    config, shorts_path, shorts_metadata, thumb
+                )
+                result["shorts_url"] = shorts_url
+                log_run(run_dir, "upload", "success", {"url": shorts_url})
+                print(f"  Live: {shorts_url}")
+                insert_video(
+                    video_id=shorts_vid, platform="youtube", language=LANG_CODE,
+                    topic=topic_data["topic"], category=topic_data["category"],
+                    title=shorts_metadata["title"], run_dir=run_dir,
+                )
+            except Exception as e:
+                print(f"  Upload failed: {e}")
+                log_run(run_dir, "upload", "failed", {"error": str(e)})
+        else:
+            print("[9] Upload skipped (--no-upload mode)")
+
+        if upload:
+            _cleanup(lang_dir, image_dir)
+
+        run_summary["videos"].append(result)
+
+        print(f"\n{'='*60}")
+        print(f"  Shorts Pipeline complete!  Output: {run_dir}")
+        print(f"{'='*60}\n")
+
+        send_run_summary(config, run_summary)
+        return run_summary
+
+    except Exception as e:
+        print(f"\n  ERROR: {e}")
+        log_run(run_dir, "error", "failed", {"error": str(e)})
+        raise
+
+
+# ── Scheduler ─────────────────────────────────────────────────────────────────
+
+def start_scheduler(config: dict):
+    """Run video at 09:00 IST and shorts at 21:00 IST, every configured day."""
+    upload_days = config["schedule"].get(
+        "upload_days",
+        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+    )
     day_map = {
-        "Monday": schedule.every().monday,
-        "Tuesday": schedule.every().tuesday,
+        "Monday":    schedule.every().monday,
+        "Tuesday":   schedule.every().tuesday,
         "Wednesday": schedule.every().wednesday,
-        "Thursday": schedule.every().thursday,
-        "Friday": schedule.every().friday,
-        "Saturday": schedule.every().saturday,
-        "Sunday": schedule.every().sunday,
+        "Thursday":  schedule.every().thursday,
+        "Friday":    schedule.every().friday,
+        "Saturday":  schedule.every().saturday,
+        "Sunday":    schedule.every().sunday,
     }
 
     for day in upload_days:
-        day_map[day].at(upload_time).do(pipeline_fn, config=config)
-        print(f"  Scheduled ({pipeline_label}): {day} at {upload_time}")
+        day_map[day].at("09:00").do(run_video_pipeline,  config=config)
+        day_map[day].at("21:00").do(run_shorts_pipeline, config=config)
+        print(f"  Scheduled: {day}  09:00 → video   21:00 → shorts")
 
-    print(f"\nScheduler running. Press Ctrl+C to stop.\n")
-
+    print("\nScheduler running. Press Ctrl+C to stop.\n")
     while True:
         schedule.run_pending()
         time.sleep(60)
 
 
+# ── Music pre-generation ──────────────────────────────────────────────────────
+
+def generate_music_library(config: dict, count: int = 10):
+    """Download 10 free royalty-free kids background music tracks to data/music/.
+    Run once: python main.py --generate-music
+    Source: FesliyanStudios.com — free for YouTube/commercial use, attribution appreciated
+    """
+    music_dir = os.path.join(BASE_DIR, "data", "music")
+    os.makedirs(music_dir, exist_ok=True)
+
+    BASE = "https://www.fesliyanstudios.com/musicfiles/"
+    # Kids-friendly, instrumental tracks — FesliyanStudios.com (David Renda)
+    # License: free for YouTube / commercial use; credit appreciated in description
+    tracks = [
+        (BASE + "2020-05-29_-_Curious_Kiddo_-_www.FesliyanStudios.com_David_Renda/"
+               + "2020-05-29_-_Curious_Kiddo_-_www.FesliyanStudios.com_David_Renda.mp3",
+         "kids_curious_kiddo.mp3"),
+        (BASE + "2020-05-22_-_Joyful_Lullaby_-_www.FesliyanStudios.com_David_Renda/"
+               + "2020-05-22_-_Joyful_Lullaby_-_www.FesliyanStudios.com_David_Renda.mp3",
+         "kids_joyful_lullaby.mp3"),
+        (BASE + "2020-05-22_-_Gentle_Lullaby_-_www.FesliyanStudios.com_David_Renda/"
+               + "2020-05-22_-_Gentle_Lullaby_-_www.FesliyanStudios.com_David_Renda.mp3",
+         "kids_gentle_lullaby.mp3"),
+        (BASE + "2021-12-06_-_Dancing_Silly_-_www.FesliyanStudios.com/"
+               + "2021-12-06_-_Dancing_Silly_-_www.FesliyanStudios.com.mp3",
+         "kids_dancing_silly.mp3"),
+        (BASE + "2020-05-29_-_Play_Date_-_www.FesliyanStudios.com_David_Renda/"
+               + "2020-05-29_-_Play_Date_-_www.FesliyanStudios.com_David_Renda.mp3",
+         "kids_play_date.mp3"),
+        (BASE + "2020-06-05_-_Duck_Duck_Goose_-_www.FesliyanStudios.com_David_Renda/"
+               + "2020-06-05_-_Duck_Duck_Goose_-_www.FesliyanStudios.com_David_Renda.mp3",
+         "kids_duck_duck_goose.mp3"),
+        (BASE + "2020-05-22_-_Dancing_Baby_-_www.FesliyanStudios.com_David_Renda/"
+               + "2020-05-22_-_Dancing_Baby_-_www.FesliyanStudios.com_David_Renda.mp3",
+         "kids_dancing_baby.mp3"),
+        (BASE + "2020-05-29_-_Clap_And_Sing_-_www.FesliyanStudios.com_David_Renda/"
+               + "2020-05-29_-_Clap_And_Sing_-_www.FesliyanStudios.com_David_Renda.mp3",
+         "kids_clap_and_sing.mp3"),
+        (BASE + "2021-12-15_-_Pig_In_The_Mud_-_www.FesliyanStudios.com/"
+               + "2021-12-15_-_Pig_In_The_Mud_-_www.FesliyanStudios.com.mp3",
+         "kids_pig_in_the_mud.mp3"),
+        (BASE + "2020-05-19_-_GooGoo_GaGa_-_www.FesliyanStudios.com_David_Renda/"
+               + "2020-05-19_-_GooGoo_GaGa_-_www.FesliyanStudios.com_David_Renda.mp3",
+         "kids_googoo_gaga.mp3"),
+    ]
+
+    import requests as req
+
+    print(f"\nDownloading {count} kids background music tracks → data/music/\n")
+    print("  Source: FesliyanStudios.com (David Renda) — free for commercial use")
+    print("  Optional credit in description: 'Music by David Renda (FesliyanStudios.com)'\n")
+
+    success = 0
+    for i, (url, filename) in enumerate(tracks[:count]):
+        out_path = os.path.join(music_dir, filename)
+        if os.path.exists(out_path):
+            print(f"  [{i+1}/{count}] Already exists: {filename}")
+            success += 1
+            continue
+        try:
+            print(f"  [{i+1}/{count}] Downloading {filename}...")
+            r = req.get(url, timeout=60, headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                "Referer": "https://www.fesliyanstudios.com/",
+            })
+            r.raise_for_status()
+            if len(r.content) < 10_000:
+                raise ValueError(f"Response too small ({len(r.content)} bytes) — likely an error page")
+            with open(out_path, "wb") as f:
+                f.write(r.content)
+            print(f"           Saved ({len(r.content)//1024} KB)")
+            success += 1
+        except Exception as e:
+            print(f"           Failed: {e}")
+        time.sleep(1)
+
+    print(f"\nDone! {success}/{count} tracks in data/music/")
+    if success < count:
+        print("\n  Tip: Manually download kids music from https://www.fesliyanstudios.com/")
+        print("  or https://pixabay.com/music/ and save .mp3 files to data/music/")
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     config = load_config()
-
-    args = sys.argv[1:]
+    args   = sys.argv[1:]
     upload = "--no-upload" not in args
-    use_prefect = "--prefect" in args
-    use_animated = "--animated" in args
 
     if "--help" in args:
         print("Usage:")
-        print("  python main.py                       # Run once with upload")
-        print("  python main.py --no-upload            # Run once without upload (test)")
-        print("  python main.py --animated             # Animated cartoon pipeline")
-        print("  python main.py --animated --no-upload # Animated without upload")
-        print("  python main.py --schedule             # Start automated scheduler (regular)")
-        print("  python main.py --schedule --animated  # Start scheduler (animated pipeline)")
-        print("  python main.py --prefect              # Run with Prefect orchestration")
-        print("  python main.py --prefect --no-upload  # Prefect without upload")
-        print("  python main.py --prefect --animated   # Prefect + animated pipeline")
+        print("  python main.py --video               # 2-3 min Hinglish video + upload")
+        print("  python main.py --shorts              # ~1 min Hinglish Short + upload")
+        print("  python main.py --video --no-upload   # test video, skip upload")
+        print("  python main.py --shorts --no-upload  # test shorts, skip upload")
+        print("  python main.py --schedule            # scheduler: video 9AM, shorts 9PM")
+        print("  python main.py --generate-music      # pre-generate 10 AI music tracks")
+    elif "--generate-music" in args:
+        generate_music_library(config)
     elif "--schedule" in args:
-        start_scheduler(config, animated=use_animated)
-    elif use_prefect:
-        try:
-            from prefect_flow import pipeline_flow, animated_pipeline_flow
-        except ImportError:
-            print("Error: Prefect is not installed.")
-            print("Install it with: pip install prefect>=3.0.0")
-            sys.exit(1)
-        if use_animated:
-            animated_pipeline_flow(config, upload=upload)
-        else:
-            pipeline_flow(config, upload=upload)
-    elif use_animated:
-        run_animated_pipeline(config, upload=upload)
+        start_scheduler(config)
+    elif "--shorts" in args:
+        run_shorts_pipeline(config, upload=upload)
+    elif "--video" in args:
+        run_video_pipeline(config, upload=upload)
     else:
-        run_pipeline(config, upload=upload)
+        print("Usage: python main.py --video | --shorts | --schedule | --generate-music [--no-upload]")
+        print("Run with --help for more details.")
+        sys.exit(1)

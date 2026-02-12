@@ -348,3 +348,43 @@ def generate_voiceover_only(config: dict, script_data: dict, output_dir: str,
 
     print("  Generating voiceover...")
     return generate_voiceover(config, script_data, audio_dir, voice=voice)
+
+
+def generate_bg_music_ai(config: dict, output_path: str) -> str | None:
+    """Generate background music via Replicate musicgen. Returns local path or None on failure."""
+    import replicate
+
+    bg_cfg = config.get("bg_music", {})
+    if bg_cfg.get("provider") != "replicate":
+        return None
+
+    prompt   = bg_cfg.get("prompt", "gentle playful kids background music, soft happy melody, no lyrics")
+    duration = bg_cfg.get("duration", 30)
+    model    = bg_cfg.get("replicate_model", "meta/musicgen")
+
+    # Set Replicate API token from config
+    os.environ["REPLICATE_API_TOKEN"] = config.get("replicate", {}).get("api_token", "")
+
+    print(f"  Generating AI background music ({duration}s)...")
+    try:
+        output = replicate.run(
+            model,
+            input={
+                "prompt": prompt,
+                "duration": duration,
+                "model_version": "stereo-large",
+                "output_format": "mp3",
+                "normalization_strategy": "peak",
+            },
+        )
+        # output is a URL string or file-like; download it
+        url = output if isinstance(output, str) else output[0]
+        response = requests.get(url, timeout=60)
+        response.raise_for_status()
+        with open(output_path, "wb") as f:
+            f.write(response.content)
+        print(f"  AI music saved: {output_path}")
+        return output_path
+    except Exception as e:
+        print(f"  Warning: AI music generation failed ({e}), falling back to local music")
+        return None

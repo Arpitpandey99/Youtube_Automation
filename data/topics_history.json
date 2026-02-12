@@ -154,5 +154,17 @@
     "category": "animals",
     "target_age": "3-8",
     "description": "Explore the amazing traits and fun facts about various furry mammals that share our planet!"
+  },
+  {
+    "topic": "Charming Clouds: The Art of Cloud Watching!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Join us as we explore different types of clouds and the fun shapes they can make in the sky!"
+  },
+  {
+    "topic": "Silly Sea Creatures: The Most Unusual Animals in the Ocean!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Dive into the ocean to explore the wackiest and weirdest animals that live beneath the waves!"
   }
 ]
