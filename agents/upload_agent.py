@@ -7,9 +7,12 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
+from agents.rate_limiter import get_limiter
+
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
-          "https://www.googleapis.com/auth/youtube"]
+          "https://www.googleapis.com/auth/youtube",
+          "https://www.googleapis.com/auth/youtube.force-ssl"]
 
 
 def get_authenticated_service(config: dict):
@@ -85,6 +88,7 @@ def upload_video(config: dict, video_path: str, metadata: dict,
         body["status"]["privacyStatus"] = "private"
         body["status"]["publishAt"] = publish_at
 
+    get_limiter("youtube").acquire()
     media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True)
 
     request = youtube.videos().insert(
@@ -117,4 +121,35 @@ def upload_video(config: dict, video_path: str, metadata: dict,
         except Exception as e:
             print(f"  Warning: Thumbnail upload failed: {e}")
 
-    return video_url
+    return video_url, video_id
+
+
+def upload_captions(config: dict, video_id: str, srt_path: str,
+                    language: str = "en", name: str = "Auto-generated"):
+    """Upload an SRT caption file to a YouTube video."""
+    youtube = get_authenticated_service(config)
+
+    # Map language names to ISO codes
+    lang_codes = {"English": "en", "Hindi": "hi", "en": "en", "hi": "hi"}
+    lang_code = lang_codes.get(language, language)
+
+    body = {
+        "snippet": {
+            "videoId": video_id,
+            "language": lang_code,
+            "name": name,
+        }
+    }
+
+    media = MediaFileUpload(srt_path, mimetype="application/x-subrip")
+
+    try:
+        get_limiter("youtube").acquire()
+        youtube.captions().insert(
+            part="snippet",
+            body=body,
+            media_body=media,
+        ).execute()
+        print(f"  Captions uploaded ({lang_code})")
+    except Exception as e:
+        print(f"  Warning: Caption upload failed: {e}")

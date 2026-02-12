@@ -64,5 +64,95 @@
     "category": "science",
     "target_age": "3-8",
     "description": "Join us as we explore the fascinating world of clouds and learn about their shapes and what they mean for the weather!"
+  },
+  {
+    "topic": "Incredible Insects: Bugs That Buzz and Wiggle!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Explore the fascinating world of insects and learn fun facts about their unique abilities and habitats!"
+  },
+  {
+    "topic": "Dazzling Dinosaurs: The Colors and Sizes of Prehistoric Giants!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Explore the fascinating world of dinosaurs and learn about their amazing colors and sizes!"
+  },
+  {
+    "topic": "Fantastic Fruit Facts: The Secrets of Your Favorite Snacks!",
+    "category": "food, science",
+    "target_age": "3-8",
+    "description": "Explore fun and surprising facts about different fruits and why they're good for you!"
+  },
+  {
+    "topic": "Glorious Galaxy: Discovering the Planets of Our Solar System!",
+    "category": "space",
+    "target_age": "3-8",
+    "description": "Join us on a journey through our solar system to learn fun facts about each planet!"
+  },
+  {
+    "topic": "Super Silly Shapes: The Fun World of Geometry!",
+    "category": "math",
+    "target_age": "3-8",
+    "description": "Explore the colorful and wacky shapes around us and learn how they fit together!"
+  },
+  {
+    "topic": "Funky Fossil Friends: What Bones Can Tell Us!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Explore how fossils are formed and what they reveal about the past in a fun and colorful way!"
+  },
+  {
+    "topic": "Playful Plants: Discovering the Secret Lives of Trees!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Explore the amazing world of trees and how they help our planet grow!"
+  },
+  {
+    "topic": "Fabulous Fairy Tale Facts: The Truth Behind Your Favorite Stories!",
+    "category": "history",
+    "target_age": "3-8",
+    "description": "Explore fun and surprising facts about classic fairy tales and their origins!"
+  },
+  {
+    "topic": "Incredible Inventions: Fun Facts About How Things Were Created!",
+    "category": "history",
+    "target_age": "3-8",
+    "description": "Explore the amazing stories behind inventions that changed the world, from the wheel to the computer!"
+  },
+  {
+    "topic": "Colorful Coral Reefs: The Underwater Cities of Fish!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Explore the vibrant world of coral reefs and the amazing creatures that call them home!"
+  },
+  {
+    "topic": "Silly Science: The Magic of Magnetic Forces!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Explore the fascinating world of magnets and discover how they attract and repel each other!"
+  },
+  {
+    "topic": "Whimsical Wonders: The Amazing World of Weather Animals!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Explore how different animals adapt to weather changes and what makes them special!"
+  },
+  {
+    "topic": "Bouncing Beans: The Fun Facts About Seed Sprouting!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Learn how seeds grow into plants and the amazing journey they go on!"
+  },
+  {
+    "topic": "Funky Footprints: Tracking Animals in the Wild!",
+    "category": "animals",
+    "target_age": "3-8",
+    "description": "Explore how different animals leave unique footprints and what they can tell us about their journey!"
+  },
+  {
+    "topic": "Fabulous Facts about Fuzzy Friends: The World of Mammals!",
+    "category": "animals",
+    "target_age": "3-8",
+    "description": "Explore the amazing traits and fun facts about various furry mammals that share our planet!"
   }
 ]

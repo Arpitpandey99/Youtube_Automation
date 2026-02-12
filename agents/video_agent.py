@@ -1,9 +1,19 @@
 import os
 import random
-from moviepy import (
-    ImageClip, AudioFileClip, CompositeVideoClip, CompositeAudioClip,
-    TextClip, concatenate_videoclips, concatenate_audioclips,
+from PIL import Image, ImageFilter, ImageEnhance
+
+# Pillow 10+ removed Image.ANTIALIAS; MoviePy 1.x still references it
+if not hasattr(Image, "ANTIALIAS"):
+    Image.ANTIALIAS = Image.LANCZOS
+
+from moviepy.editor import (
+    ImageClip, AudioFileClip, VideoFileClip, CompositeVideoClip,
+    CompositeAudioClip, TextClip, concatenate_videoclips,
+    concatenate_audioclips,
 )
+
+
+TRANSITION_DURATION = 0.6  # seconds of crossfade between scenes
 
 
 def create_scene_clip(image_path: str, audio_path: str, narration_text: str,
@@ -16,7 +26,7 @@ def create_scene_clip(image_path: str, audio_path: str, narration_text: str,
     duration = audio.duration + 0.5  # small padding
 
     # Create image clip resized to target resolution
-    img_clip = ImageClip(image_path, duration=duration).resized(resolution)
+    img_clip = ImageClip(image_path, duration=duration).resize(resolution)
 
     # Create subtitle - split long text into lines
     words = narration_text.split()
@@ -34,17 +44,17 @@ def create_scene_clip(image_path: str, audio_path: str, narration_text: str,
     try:
         txt_clip = (
             TextClip(
-                text=subtitle_text,
-                font_size=config["video"]["subtitle_font_size"],
+                subtitle_text,
+                fontsize=config["video"]["subtitle_font_size"],
                 color=config["video"]["subtitle_color"],
                 font="Arial-Bold",
                 stroke_color="black",
                 stroke_width=2,
                 method="caption",
                 size=(resolution[0] - 200, None),
-                duration=duration,
             )
-            .with_position(("center", resolution[1] - 180))
+            .set_duration(duration)
+            .set_position(("center", resolution[1] - 180))
         )
         video = CompositeVideoClip([img_clip, txt_clip], size=resolution)
     except Exception:
@@ -52,7 +62,7 @@ def create_scene_clip(image_path: str, audio_path: str, narration_text: str,
         print("    Warning: Subtitles skipped (install ImageMagick for subtitle support)")
         video = img_clip
 
-    video = video.with_audio(audio)
+    video = video.set_audio(audio)
     return video
 
 
@@ -75,8 +85,16 @@ def assemble_video(config: dict, script_data: dict, assets: dict, output_dir: st
         clip = create_scene_clip(image_path, audio_path, narration, config)
         scene_clips.append(clip)
 
-    # Concatenate all scenes
-    final = concatenate_videoclips(scene_clips, method="compose")
+    # Apply crossfade transitions between scenes
+    t = TRANSITION_DURATION
+    for i in range(len(scene_clips)):
+        if i > 0:
+            scene_clips[i] = scene_clips[i].crossfadein(t)
+        if i < len(scene_clips) - 1:
+            scene_clips[i] = scene_clips[i].crossfadeout(t)
+
+    # Concatenate with overlap (negative padding = crossfade overlap)
+    final = concatenate_videoclips(scene_clips, method="compose", padding=-t)
 
     # Add background music if available
     music_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "music")
@@ -84,14 +102,14 @@ def assemble_video(config: dict, script_data: dict, assets: dict, output_dir: st
 
     if music_files:
         bg_music_path = os.path.join(music_dir, random.choice(music_files))
-        bg_music = AudioFileClip(bg_music_path).with_volume_scaled(config["video"]["bg_music_volume"])
+        bg_music = AudioFileClip(bg_music_path).volumex(config["video"]["bg_music_volume"])
         # Loop if needed
         if bg_music.duration < final.duration:
             loops = int(final.duration / bg_music.duration) + 1
             bg_music = concatenate_audioclips([bg_music] * loops)
-        bg_music = bg_music.subclipped(0, final.duration)
+        bg_music = bg_music.subclip(0, final.duration)
 
-        final = final.with_audio(CompositeAudioClip([final.audio, bg_music]))
+        final = final.set_audio(CompositeAudioClip([final.audio, bg_music]))
 
     # Export
     output_path = os.path.join(output_dir, "final_video.mp4")
@@ -111,6 +129,37 @@ def assemble_video(config: dict, script_data: dict, assets: dict, output_dir: st
     return output_path
 
 
+def _prepare_vertical_image(image_path: str, target_w: int = 1080, target_h: int = 1920) -> str:
+    """Prepare a landscape image for vertical format with blurred background.
+
+    Instead of stretching/compressing the image, this:
+    1. Creates a blurred, darkened copy scaled to fill the full vertical frame
+    2. Places the original image (scaled to fit width) centered on top
+    """
+    img = Image.open(image_path).convert("RGB")
+    w, h = img.size
+
+    # Create blurred background — stretch to fill entire vertical frame
+    bg = img.copy()
+    bg = bg.resize((target_w, target_h), Image.LANCZOS)
+    bg = bg.filter(ImageFilter.GaussianBlur(radius=25))
+    bg = ImageEnhance.Brightness(bg).enhance(0.35)
+
+    # Scale foreground to fit width, maintaining aspect ratio
+    scale = target_w / w
+    new_h = int(h * scale)
+    fg = img.resize((target_w, new_h), Image.LANCZOS)
+
+    # Center the foreground vertically on the blurred background
+    y_offset = (target_h - new_h) // 2
+    bg.paste(fg, (0, y_offset))
+
+    # Save the prepared vertical image
+    temp_path = image_path.rsplit(".", 1)[0] + "_vertical.png"
+    bg.save(temp_path, quality=95)
+    return temp_path
+
+
 def create_shorts_clip(image_path: str, audio_path: str, narration_text: str,
                        config: dict) -> CompositeVideoClip:
     """Create a single scene clip in vertical (9:16) format for Shorts."""
@@ -119,20 +168,9 @@ def create_shorts_clip(image_path: str, audio_path: str, narration_text: str,
     audio = AudioFileClip(audio_path)
     duration = audio.duration + 0.3
 
-    # Resize image to fill vertical frame (crop center)
-    img_clip = ImageClip(image_path, duration=duration)
-    # Scale to fill width, then crop height to 1920
-    w, h = img_clip.size
-    scale = shorts_res[0] / w
-    new_h = int(h * scale)
-    img_clip = img_clip.resized((shorts_res[0], new_h))
-    # Center crop vertically
-    if new_h > shorts_res[1]:
-        y_offset = (new_h - shorts_res[1]) // 2
-        img_clip = img_clip.cropped(y1=y_offset, y2=y_offset + shorts_res[1])
-    elif new_h < shorts_res[1]:
-        # If image is too short, just resize to exact resolution
-        img_clip = img_clip.resized(shorts_res)
+    # Prepare vertical image with blurred background (no stretching)
+    vertical_path = _prepare_vertical_image(image_path, shorts_res[0], shorts_res[1])
+    img_clip = ImageClip(vertical_path, duration=duration).resize(shorts_res)
 
     # Subtitles with larger font for vertical format
     words = narration_text.split()
@@ -150,46 +188,64 @@ def create_shorts_clip(image_path: str, audio_path: str, narration_text: str,
     try:
         txt_clip = (
             TextClip(
-                text=subtitle_text,
-                font_size=52,
+                subtitle_text,
+                fontsize=52,
                 color="white",
                 font="Arial-Bold",
                 stroke_color="black",
                 stroke_width=3,
                 method="caption",
                 size=(shorts_res[0] - 100, None),
-                duration=duration,
             )
-            .with_position(("center", shorts_res[1] - 350))
+            .set_duration(duration)
+            .set_position(("center", shorts_res[1] - 350))
         )
         video = CompositeVideoClip([img_clip, txt_clip], size=shorts_res)
     except Exception:
         video = img_clip
 
-    video = video.with_audio(audio)
+    video = video.set_audio(audio)
     return video
 
 
-def assemble_shorts(config: dict, script_data: dict, assets: dict, output_dir: str) -> str:
-    """Assemble a YouTube Shorts video (vertical, ≤60 seconds) from the best scenes."""
+def assemble_shorts(config: dict, script_data: dict, assets: dict, output_dir: str,
+                    shorts_script: dict = None, shorts_audio_files: list = None) -> str:
+    """Assemble a YouTube Shorts video (vertical, <=60 seconds).
+
+    If shorts_script and shorts_audio_files are provided, uses the re-hooked
+    shorts-specific script. Otherwise falls back to truncating the full video scenes.
+    """
     scene_clips = []
     total_duration = 0.0
-    max_duration = 59.0  # keep under 60s
+    max_duration = 59.0
 
-    # Pick scenes that fit within 60 seconds
-    for i in range(len(script_data["scenes"])):
-        audio_path = assets["audio_files"][i]
+    use_script = shorts_script or script_data
+    use_audio = shorts_audio_files or assets["audio_files"]
+
+    for i in range(len(use_script["scenes"])):
+        if i >= len(use_audio):
+            break
+
+        audio_path = use_audio[i]
         audio = AudioFileClip(audio_path)
-        scene_dur = audio.duration + 0.3
+        padding = 0.2 if shorts_script else 0.3
+        scene_dur = audio.duration + padding
         audio.close()
 
         if total_duration + scene_dur > max_duration:
             break
 
-        image_path = assets["image_files"][i]
-        narration = script_data["scenes"][i]["narration"]
+        # Map to correct original image using scene_number from shorts script
+        scene = use_script["scenes"][i]
+        scene_num = scene.get("scene_number", i + 1)
+        img_idx = scene_num - 1  # scene_number is 1-indexed
+        if img_idx < 0 or img_idx >= len(assets["image_files"]):
+            img_idx = min(i, len(assets["image_files"]) - 1)
+        image_path = assets["image_files"][img_idx]
+
+        narration = scene["narration"]
         if i == 0:
-            narration = script_data["intro_hook"] + " " + narration
+            narration = use_script["intro_hook"] + " " + narration
 
         print(f"  Shorts: assembling scene {i+1}...")
         clip = create_shorts_clip(image_path, audio_path, narration, config)
@@ -199,11 +255,18 @@ def assemble_shorts(config: dict, script_data: dict, assets: dict, output_dir: s
     if not scene_clips:
         raise Exception("No scenes fit within 60 seconds for Shorts")
 
-    final = concatenate_videoclips(scene_clips, method="compose")
+    # Apply crossfade transitions (shorter for shorts)
+    t = TRANSITION_DURATION * 0.6  # ~0.36s for fast-paced shorts
+    for i in range(len(scene_clips)):
+        if i > 0:
+            scene_clips[i] = scene_clips[i].crossfadein(t)
+        if i < len(scene_clips) - 1:
+            scene_clips[i] = scene_clips[i].crossfadeout(t)
 
-    # Trim to exactly 59 seconds if somehow over
+    final = concatenate_videoclips(scene_clips, method="compose", padding=-t)
+
     if final.duration > max_duration:
-        final = final.subclipped(0, max_duration)
+        final = final.subclip(0, max_duration)
 
     # Add background music if available
     music_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "music")
@@ -211,12 +274,12 @@ def assemble_shorts(config: dict, script_data: dict, assets: dict, output_dir: s
 
     if music_files:
         bg_music_path = os.path.join(music_dir, random.choice(music_files))
-        bg_music = AudioFileClip(bg_music_path).with_volume_scaled(config["video"]["bg_music_volume"])
+        bg_music = AudioFileClip(bg_music_path).volumex(config["video"]["bg_music_volume"])
         if bg_music.duration < final.duration:
             loops = int(final.duration / bg_music.duration) + 1
             bg_music = concatenate_audioclips([bg_music] * loops)
-        bg_music = bg_music.subclipped(0, final.duration)
-        final = final.with_audio(CompositeAudioClip([final.audio, bg_music]))
+        bg_music = bg_music.subclip(0, final.duration)
+        final = final.set_audio(CompositeAudioClip([final.audio, bg_music]))
 
     output_path = os.path.join(output_dir, "shorts_video.mp4")
     final.write_videofile(
@@ -232,4 +295,250 @@ def assemble_shorts(config: dict, script_data: dict, assets: dict, output_dir: s
     final.close()
 
     print(f"  Shorts video: {total_duration:.1f}s, {len(scene_clips)} scenes")
+    return output_path
+
+
+# ── Animated video assembly ──────────────────────────────────────────
+
+def _add_subtitles_to_clip(clip, narration_text: str, config: dict,
+                           resolution: tuple, vertical: bool = False):
+    """Add subtitle overlay to a video clip. Returns CompositeVideoClip."""
+    max_chars = 25 if vertical else 50
+    font_size = 52 if vertical else config["video"]["subtitle_font_size"]
+    color = "white" if vertical else config["video"]["subtitle_color"]
+    y_pos = resolution[1] - 350 if vertical else resolution[1] - 180
+
+    words = narration_text.split()
+    lines = []
+    current_line = []
+    for word in words:
+        current_line.append(word)
+        if len(" ".join(current_line)) > max_chars:
+            lines.append(" ".join(current_line))
+            current_line = []
+    if current_line:
+        lines.append(" ".join(current_line))
+    subtitle_text = "\n".join(lines)
+
+    try:
+        txt_clip = (
+            TextClip(
+                subtitle_text,
+                fontsize=font_size,
+                color=color,
+                font="Arial-Bold",
+                stroke_color="black",
+                stroke_width=2 if not vertical else 3,
+                method="caption",
+                size=(resolution[0] - (100 if vertical else 200), None),
+            )
+            .set_duration(clip.duration)
+            .set_position(("center", y_pos))
+        )
+        return CompositeVideoClip([clip, txt_clip], size=resolution)
+    except Exception:
+        print("    Warning: Subtitles skipped (install ImageMagick for subtitle support)")
+        return clip
+
+
+def _add_bg_music(final_clip, config: dict):
+    """Add background music to a clip if music files are available."""
+    music_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "music")
+    music_files = [f for f in os.listdir(music_dir) if f.endswith((".mp3", ".wav"))] if os.path.exists(music_dir) else []
+
+    if music_files:
+        bg_music_path = os.path.join(music_dir, random.choice(music_files))
+        bg_music = AudioFileClip(bg_music_path).volumex(config["video"]["bg_music_volume"])
+        if bg_music.duration < final_clip.duration:
+            loops = int(final_clip.duration / bg_music.duration) + 1
+            bg_music = concatenate_audioclips([bg_music] * loops)
+        bg_music = bg_music.subclip(0, final_clip.duration)
+        return final_clip.set_audio(CompositeAudioClip([final_clip.audio, bg_music]))
+
+    return final_clip
+
+
+def assemble_animated_video(config: dict, script_data: dict,
+                            animated_clips: list, audio_files: list,
+                            output_dir: str) -> str:
+    """Assemble final video from pre-animated clips + audio files."""
+    resolution = tuple(config["video"]["resolution"])
+    scene_clips = []
+
+    for i in range(len(script_data["scenes"])):
+        if i >= len(animated_clips) or i >= len(audio_files):
+            break
+
+        clip_path = animated_clips[i]
+        audio_path = audio_files[i]
+        narration = script_data["scenes"][i]["narration"]
+
+        if i == 0:
+            narration = script_data["intro_hook"] + " " + narration
+        elif i == len(script_data["scenes"]) - 1:
+            narration = narration + " " + script_data["outro"]
+
+        print(f"  Assembling animated scene {i+1}...")
+        video_clip = VideoFileClip(clip_path).resize(resolution)
+        audio = AudioFileClip(audio_path)
+
+        # Match clip duration to audio
+        target_dur = audio.duration + 0.5
+        if video_clip.duration < target_dur:
+            # Loop the clip to fill the audio duration
+            from moviepy.editor import vfx
+            loops = int(target_dur / video_clip.duration) + 1
+            video_clip = video_clip.fx(vfx.loop, n=loops)
+        video_clip = video_clip.subclip(0, target_dur)
+
+        # Add subtitles
+        video_clip = _add_subtitles_to_clip(video_clip, narration, config, resolution)
+        video_clip = video_clip.set_audio(audio)
+        scene_clips.append(video_clip)
+
+    # Apply crossfade transitions
+    t = TRANSITION_DURATION
+    for i in range(len(scene_clips)):
+        if i > 0:
+            scene_clips[i] = scene_clips[i].crossfadein(t)
+        if i < len(scene_clips) - 1:
+            scene_clips[i] = scene_clips[i].crossfadeout(t)
+
+    final = concatenate_videoclips(scene_clips, method="compose", padding=-t)
+    final = _add_bg_music(final, config)
+
+    output_path = os.path.join(output_dir, "final_video.mp4")
+    final.write_videofile(
+        output_path,
+        fps=config["video"]["fps"],
+        codec="libx264",
+        audio_codec="aac",
+        threads=4,
+    )
+
+    for clip in scene_clips:
+        clip.close()
+    final.close()
+
+    return output_path
+
+
+def _prepare_vertical_clip(clip, target_w: int = 1080, target_h: int = 1920):
+    """Convert a landscape video clip to vertical with blurred background."""
+    import numpy as np
+
+    cw, ch = clip.size
+
+    def vertical_frame(get_frame, t):
+        frame = Image.fromarray(get_frame(t))
+
+        # Blurred background
+        bg = frame.copy().resize((target_w, target_h), Image.LANCZOS)
+        bg = bg.filter(ImageFilter.GaussianBlur(radius=25))
+        bg = ImageEnhance.Brightness(bg).enhance(0.35)
+
+        # Scale foreground to fit width
+        scale = target_w / frame.size[0]
+        new_h = int(frame.size[1] * scale)
+        fg = frame.resize((target_w, new_h), Image.LANCZOS)
+
+        # Center
+        y_offset = (target_h - new_h) // 2
+        bg.paste(fg, (0, y_offset))
+        return np.array(bg)
+
+    return clip.fl(vertical_frame).resize((target_w, target_h))
+
+
+def assemble_animated_shorts(config: dict, script_data: dict,
+                             animated_clips: list, audio_files: list,
+                             output_dir: str,
+                             shorts_script: dict = None,
+                             shorts_audio: list = None) -> str:
+    """Assemble animated Shorts video (vertical, <=60s)."""
+    shorts_res = (1080, 1920)
+    scene_clips = []
+    total_duration = 0.0
+    max_duration = 59.0
+
+    use_script = shorts_script or script_data
+    use_audio = shorts_audio or audio_files
+
+    for i in range(len(use_script["scenes"])):
+        if i >= len(use_audio):
+            break
+
+        audio_path = use_audio[i]
+        audio = AudioFileClip(audio_path)
+        padding = 0.2 if shorts_script else 0.3
+        scene_dur = audio.duration + padding
+        audio.close()
+
+        if total_duration + scene_dur > max_duration:
+            break
+
+        # Map to correct animated clip using scene_number
+        scene = use_script["scenes"][i]
+        scene_num = scene.get("scene_number", i + 1)
+        clip_idx = scene_num - 1
+        if clip_idx < 0 or clip_idx >= len(animated_clips):
+            clip_idx = min(i, len(animated_clips) - 1)
+
+        clip_path = animated_clips[clip_idx]
+        narration = scene["narration"]
+        if i == 0:
+            narration = use_script["intro_hook"] + " " + narration
+
+        print(f"  Animated Shorts: scene {i+1}...")
+        video_clip = VideoFileClip(clip_path)
+
+        # Match duration to audio
+        audio = AudioFileClip(audio_path)
+        target_dur = audio.duration + padding
+        if video_clip.duration < target_dur:
+            from moviepy.editor import vfx
+            loops = int(target_dur / video_clip.duration) + 1
+            video_clip = video_clip.fx(vfx.loop, n=loops)
+        video_clip = video_clip.subclip(0, target_dur)
+
+        # Convert to vertical with blurred background
+        video_clip = _prepare_vertical_clip(video_clip, shorts_res[0], shorts_res[1])
+
+        # Add subtitles
+        video_clip = _add_subtitles_to_clip(video_clip, narration, config,
+                                            shorts_res, vertical=True)
+        video_clip = video_clip.set_audio(audio)
+        scene_clips.append(video_clip)
+        total_duration += scene_dur
+
+    if not scene_clips:
+        raise Exception("No animated scenes fit within 60 seconds for Shorts")
+
+    t = TRANSITION_DURATION * 0.6
+    for i in range(len(scene_clips)):
+        if i > 0:
+            scene_clips[i] = scene_clips[i].crossfadein(t)
+        if i < len(scene_clips) - 1:
+            scene_clips[i] = scene_clips[i].crossfadeout(t)
+
+    final = concatenate_videoclips(scene_clips, method="compose", padding=-t)
+    if final.duration > max_duration:
+        final = final.subclip(0, max_duration)
+
+    final = _add_bg_music(final, config)
+
+    output_path = os.path.join(output_dir, "shorts_video.mp4")
+    final.write_videofile(
+        output_path,
+        fps=config["video"]["fps"],
+        codec="libx264",
+        audio_codec="aac",
+        threads=4,
+    )
+
+    for clip in scene_clips:
+        clip.close()
+    final.close()
+
+    print(f"  Animated Shorts: {total_duration:.1f}s, {len(scene_clips)} scenes")
     return output_path

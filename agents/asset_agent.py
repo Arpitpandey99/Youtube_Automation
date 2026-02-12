@@ -6,18 +6,26 @@ import time
 
 import edge_tts
 
+from agents.rate_limiter import get_limiter
+
 
 def _sanitize_tts_text(text: str) -> str:
-    """Remove/replace characters that break edge-tts."""
+    """Remove/replace characters that break edge-tts SSML."""
     replacements = {
         "\u2019": "'", "\u2018": "'",  # smart quotes
         "\u201c": '"', "\u201d": '"',  # smart double quotes
         "\u2013": "-", "\u2014": "-",  # en/em dashes
         "\u2026": "...",               # ellipsis
+        "&": " and ",                  # SSML special char — breaks XML
+        "<": "",                       # SSML tag start — breaks XML
+        ">": "",                       # SSML tag end — breaks XML
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
-    return text
+    # Collapse any double spaces created by replacements
+    while "  " in text:
+        text = text.replace("  ", " ")
+    return text.strip()
 
 
 def pick_voice(config: dict, lang_code: str) -> str:
@@ -30,17 +38,10 @@ def pick_voice(config: dict, lang_code: str) -> str:
     raise ValueError(f"No voices configured for language: {lang_code}")
 
 
-def generate_voiceover(config: dict, script_data: dict, output_dir: str,
-                       voice: str = None) -> list[str]:
-    """Generate voiceover audio files for each scene using edge-tts."""
-    if voice is None:
-        voice = pick_voice(config, "en")
-    audio_files = []
-
-    # Combine intro hook with first scene, and outro with last scene
+def _build_scene_texts(script_data: dict) -> list[str]:
+    """Build narration texts for each scene, combining intro/outro."""
     texts = []
     for i, scene in enumerate(script_data["scenes"]):
-        text = ""
         if i == 0:
             text = script_data["intro_hook"] + " " + scene["narration"]
         elif i == len(script_data["scenes"]) - 1:
@@ -48,17 +49,117 @@ def generate_voiceover(config: dict, script_data: dict, output_dir: str,
         else:
             text = scene["narration"]
         texts.append(_sanitize_tts_text(text))
+    return texts
 
-    async def _generate_single(text: str, filepath: str):
-        communicate = edge_tts.Communicate(text, voice)
-        await communicate.save(filepath)
+
+def _generate_voiceover_edge_tts(texts: list[str], output_dir: str,
+                                  voice: str, lang_code: str = "en") -> list[str]:
+    """Generate voiceover using edge-tts (free) with natural prosody."""
+    audio_files = []
+
+    # Keep prosody subtle — aggressive rate/pitch makes it sound MORE robotic
+    # Let the natural voice shine through; the script itself has enthusiasm
+    rate = "+3%"
+    pitch = "+0Hz"
+
+    async def _generate_single(text: str, filepath: str, use_prosody: bool = True):
+        if use_prosody:
+            communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+        else:
+            communicate = edge_tts.Communicate(text, voice)
+        await asyncio.wait_for(communicate.save(filepath), timeout=60)
 
     for i, text in enumerate(texts):
         filepath = os.path.join(output_dir, f"scene_{i+1}.mp3")
-        asyncio.run(_generate_single(text, filepath))
+        print(f"    Scene {i+1}: {len(text)} chars — \"{text[:60]}...\"" if len(text) > 60 else f"    Scene {i+1}: {len(text)} chars")
+        for attempt in range(4):
+            try:
+                # Last attempt: drop prosody in case it's confusing the SSML parser
+                use_prosody = attempt < 3
+                asyncio.run(_generate_single(text, filepath, use_prosody=use_prosody))
+                break
+            except Exception as e:
+                if attempt < 3:
+                    wait = 10 * (attempt + 1)
+                    print(f"    TTS retry {attempt+1}/3 ({type(e).__name__}), waiting {wait}s...")
+                    time.sleep(wait)
+                else:
+                    raise
+        audio_files.append(filepath)
+        time.sleep(0.5)  # brief pause between scenes to avoid rate limiting
+
+    return audio_files
+
+
+def _generate_voiceover_openai_tts(config: dict, texts: list[str],
+                                    output_dir: str, voice: str = None) -> list[str]:
+    """Generate voiceover using OpenAI TTS API."""
+    from openai import OpenAI
+
+    client = OpenAI(api_key=config["openai"]["api_key"])
+    # Always use the configured OpenAI voice — the `voice` param is an edge-tts voice name
+    tts_voice = config.get("tts", {}).get("openai_voice", "nova")
+    audio_files = []
+
+    for i, text in enumerate(texts):
+        get_limiter("openai_tts").acquire()
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice=tts_voice,
+            input=text,
+        )
+        filepath = os.path.join(output_dir, f"scene_{i+1}.mp3")
+        response.stream_to_file(filepath)
         audio_files.append(filepath)
 
     return audio_files
+
+
+def _generate_voiceover_elevenlabs(config: dict, texts: list[str],
+                                    output_dir: str) -> list[str]:
+    """Generate voiceover using ElevenLabs API."""
+    try:
+        from elevenlabs.client import ElevenLabs
+    except ImportError:
+        raise ImportError("Install elevenlabs package: pip install elevenlabs")
+
+    api_key = config.get("tts", {}).get("elevenlabs_api_key", "")
+    voice_id = config.get("tts", {}).get("elevenlabs_voice_id", "")
+
+    client = ElevenLabs(api_key=api_key)
+    audio_files = []
+
+    for i, text in enumerate(texts):
+        get_limiter("elevenlabs").acquire()
+        audio = client.generate(
+            text=text,
+            voice=voice_id,
+            model="eleven_multilingual_v2",
+        )
+        filepath = os.path.join(output_dir, f"scene_{i+1}.mp3")
+        with open(filepath, "wb") as f:
+            for chunk in audio:
+                f.write(chunk)
+        audio_files.append(filepath)
+
+    return audio_files
+
+
+def generate_voiceover(config: dict, script_data: dict, output_dir: str,
+                       voice: str = None) -> list[str]:
+    """Generate voiceover using the configured TTS provider."""
+    if voice is None:
+        voice = pick_voice(config, "en")
+
+    texts = _build_scene_texts(script_data)
+    provider = config.get("tts", {}).get("provider", "edge-tts")
+
+    if provider == "openai":
+        return _generate_voiceover_openai_tts(config, texts, output_dir, voice=voice)
+    elif provider == "elevenlabs":
+        return _generate_voiceover_elevenlabs(config, texts, output_dir)
+    else:
+        return _generate_voiceover_edge_tts(texts, output_dir, voice)
 
 
 def generate_images_replicate(config: dict, script_data: dict, output_dir: str) -> list[str]:
@@ -104,7 +205,7 @@ def generate_images_replicate(config: dict, script_data: dict, output_dir: str) 
         image_files.append(filepath)
         print(f"    Scene {i+1}/{len(script_data['scenes'])} done")
 
-        time.sleep(12)  # stay under 6 req/min limit
+        get_limiter("replicate").acquire()
 
     return image_files
 
@@ -123,6 +224,7 @@ def generate_images_huggingface(config: dict, script_data: dict, output_dir: str
         prompt = f"{style}, {scene['visual_description']}, high quality, no text, no words"
 
         for attempt in range(3):
+            get_limiter("huggingface").acquire()
             response = requests.post(api_url, headers=headers, json={"inputs": prompt})
             if response.status_code == 200:
                 filepath = os.path.join(output_dir, f"scene_{i+1}.png")
@@ -152,6 +254,7 @@ def generate_images_openai(config: dict, script_data: dict, output_dir: str) -> 
     for i, scene in enumerate(script_data["scenes"]):
         prompt = f"{style}, {scene['visual_description']}, no text, no words"
 
+        get_limiter("openai").acquire()
         response = client.images.generate(
             model="dall-e-3",
             prompt=prompt[:4000],
@@ -183,6 +286,7 @@ def generate_images_pexels(config: dict, script_data: dict, output_dir: str) -> 
         query = scene["visual_description"][:80]  # Pexels search query
         url = f"https://api.pexels.com/v1/search?query={query}&per_page=1&orientation=landscape"
 
+        get_limiter("pexels").acquire()
         response = requests.get(url, headers=headers)
         data = response.json()
 

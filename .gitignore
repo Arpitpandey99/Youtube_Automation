@@ -16,6 +16,7 @@ output/
 
 # Data files (topics history can be committed, music is large)
 data/music/
+data/pipeline.db
 
 # OS files
 .DS_Store

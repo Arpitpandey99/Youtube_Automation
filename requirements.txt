@@ -9,4 +9,9 @@ pyyaml>=6.0
 schedule>=1.2.0
 requests>=2.31.0
 replicate>=0.15.0
-instagrapi>=2.0.0
+
+# Optional: better TTS voices (only if tts.provider=elevenlabs)
+# elevenlabs>=1.0.0
+
+# Optional: Prefect orchestration (only if orchestration.engine=prefect)
+# prefect>=3.0.0

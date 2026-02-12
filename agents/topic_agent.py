@@ -2,6 +2,8 @@ import json
 import os
 from openai import OpenAI
 
+from agents.analytics_agent import get_performance_hints
+
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 HISTORY_FILE = os.path.join(DATA_DIR, "topics_history.json")
@@ -20,20 +22,24 @@ def save_history(history):
 
 
 def generate_topic(config: dict) -> dict:
-    """Generate a unique kid-friendly video topic."""
+    """Generate a unique kid-friendly video topic, informed by past performance."""
     client = OpenAI(api_key=config["openai"]["api_key"])
     history = load_history()
-    past_topics = [h["topic"] for h in history[-50:]]  # last 50 to avoid repeats
+    past_topics = [h["topic"] for h in history[-50:]]
 
     niche = config["content"]["niche"]
     target_age = config["content"]["target_age"]
+
+    # Get performance hints if analytics is enabled
+    perf_hints = get_performance_hints(config)
+    perf_section = f"\n\nPERFORMANCE DATA:\n{perf_hints}\nUse these insights to pick a topic likely to perform well." if perf_hints else ""
 
     prompt = f"""Generate 1 unique YouTube video topic for kids aged {target_age}.
 Niche: {niche}
 
 The topic must NOT be any of these previously used topics:
 {json.dumps(past_topics, indent=2) if past_topics else "None yet"}
-
+{perf_section}
 Respond in this exact JSON format:
 {{
     "topic": "the video topic title",

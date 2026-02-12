@@ -21,25 +21,23 @@ pexels:
 
 # TTS configuration
 tts:
-  provider: "edge-tts"  # options: "edge-tts", "openai"
+  provider: "edge-tts"  # options: "edge-tts", "openai", "elevenlabs"
   openai_voice: "nova"
+  elevenlabs_api_key: "YOUR_ELEVENLABS_API_KEY"
+  elevenlabs_voice_id: "YOUR_ELEVENLABS_VOICE_ID"
 
 # Language configuration - pipeline runs for each language
 languages:
   - code: "en"
     name: "English"
     voices:
-      - "en-US-AnaNeural"        # child female
-      - "en-US-AriaNeural"       # young female
-      - "en-US-JennyNeural"      # friendly female
-      - "en-US-MichelleNeural"   # warm female
-      - "en-US-GuyNeural"        # friendly male
-      - "en-GB-SoniaNeural"      # British female
+      - "en-US-JennyNeural"      # most natural, warm storyteller
+      - "en-US-AriaNeural"       # expressive, great for kids content
+      - "en-US-SaraNeural"       # friendly, clear enunciation
   - code: "hi"
     name: "Hindi"
     voices:
-      - "hi-IN-SwaraNeural"      # female
-      - "hi-IN-MadhurNeural"     # male
+      - "hi-IN-SwaraNeural"      # expressive female, best for Hinglish
 
 # YouTube configuration
 youtube:
@@ -49,12 +47,13 @@ youtube:
   privacy_status: "public"  # public, private, unlisted
   made_for_kids: true
 
-# Instagram configuration
+# Instagram configuration (uses official Meta/Instagram Graph API)
+# See: https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/content-publishing
 instagram:
   enabled: false
-  username: "YOUR_INSTAGRAM_USERNAME"
-  password: "YOUR_INSTAGRAM_PASSWORD"
-  session_file: "instagram_session.json"
+  ig_user_id: "YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID"
+  access_token: "YOUR_LONG_LIVED_ACCESS_TOKEN"
+  graph_api_version: "v21.0"
 
 # Content configuration
 content:
@@ -66,9 +65,9 @@ content:
 
 # Scheduler
 schedule:
-  videos_per_week: 3
-  upload_days: ["Monday", "Wednesday", "Friday"]
-  upload_time: "10:00"  # 24hr format
+  videos_per_week: 14
+  upload_days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+  upload_time: "21:00"  # 9 PM — ensure server timezone is set to Asia/Kolkata (IST)
 
 # Video settings
 video:
@@ -77,3 +76,53 @@ video:
   bg_music_volume: 0.08
   subtitle_font_size: 48
   subtitle_color: "yellow"
+
+# Brand voice (optional - keeps consistent personality across videos)
+brand_voice:
+  enabled: false
+  tone: "warm, enthusiastic, educational storyteller for kids"
+  catchphrases: ["Hey amazing kids!", "Wasn't that super cool?"]
+  vocabulary_level: "simple"
+
+# A/B testing (optional - test different titles/hooks/thumbnails)
+ab_testing:
+  enabled: false
+  variants_count: 3
+  min_data_points: 10
+
+# Analytics feedback loop (optional - learn from past video performance)
+analytics:
+  enabled: false
+  youtube_analytics: true
+  fetch_delay_hours: 48
+
+# Playlist automation (optional - auto-organize videos into playlists)
+playlists:
+  enabled: false
+  auto_create: true
+  min_videos_for_playlist: 3
+  naming_template: "{category} for Kids - {language}"
+
+# Animation settings (for --animated pipeline)
+animation:
+  provider: "kenburns"  # options: "kenburns" (free), "ai" (uses Replicate ~$0.20/scene)
+  image_style: "colorful cartoon illustration, animated style, vibrant colors, kid-friendly, Pixar-like, clean lines, no text, no words"
+  kenburns:
+    zoom_ratio: 0.04        # how much to zoom per second
+    effects: ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "combined"]
+  ai:
+    model: "wan-video/wan-2.5-i2v-fast"  # Replicate model for image-to-video
+    duration: 5              # seconds per generated clip
+    resolution: "720p"
+
+# Email notifications — sent after each pipeline run with video links
+notifications:
+  email:
+    enabled: false                        # set to true once you configure the fields below
+    sender_email: "YOUR_GMAIL@gmail.com"
+    sender_password: "YOUR_GMAIL_APP_PASSWORD"  # 16-char App Password from Google Account settings
+    recipient_email: "YOUR_EMAIL@gmail.com"
+
+# Orchestration engine
+orchestration:
+  engine: "simple"  # options: "simple" (schedule lib), "prefect"
