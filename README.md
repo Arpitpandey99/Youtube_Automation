@@ -2,6 +2,8 @@
 
 Fully automated pipeline that generates and uploads kid-friendly YouTube videos (and Instagram Reels) in multiple languages using AI. Runs on AWS EC2 with twice-daily cron scheduling, GitHub Actions CI/CD, and Gmail email notifications after every run.
 
+> Deployed on AWS EC2 t4g.small (ARM64) — auto-deploys on every push to `main`.
+
 ---
 
 ## Features
