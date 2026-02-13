@@ -33,7 +33,7 @@ languages:
     voices:
       - "en-IN-NeerjaNeural"            # Indian English female — warm, natural Hinglish
       - "en-IN-NeerjaExpressiveNeural"  # Indian English female — expressive, kids-friendly
-      - "hi-IN-SwaraNeural"             # Hindi female — natural Hinglish storyteller
+      # hi-IN-SwaraNeural removed: native Hindi TTS reads English with heavy accent (bad for Hinglish)
 
 # YouTube configuration
 youtube:
