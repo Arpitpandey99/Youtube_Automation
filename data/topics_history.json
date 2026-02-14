@@ -184,5 +184,23 @@
     "category": "music",
     "target_age": "3-8",
     "description": "Gentle lullabies inspired by the beauty of the night sky to help kids drift off to sleep."
+  },
+  {
+    "topic": "Fascinating Fossil Fuels: How Nature Powers Our World!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Explore how ancient plants and animals turned into fuels that help power our everyday lives!"
+  },
+  {
+    "topic": "Amazing Animal Architects: Creatures Who Build!",
+    "category": "animals",
+    "target_age": "3-8",
+    "description": "Explore the incredible structures built by animals, from beehives to burrows!"
+  },
+  {
+    "topic": "Glimmering Gems: The Sparkly World of Crystals!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Discover the magical world of crystals and how they form in nature!"
   }
 ]

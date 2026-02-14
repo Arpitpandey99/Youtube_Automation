@@ -93,7 +93,7 @@ def _generate_voiceover_edge_tts(texts: list[str], output_dir: str,
 
 def _generate_voiceover_openai_tts(config: dict, texts: list[str],
                                     output_dir: str, voice: str = None) -> list[str]:
-    """Generate voiceover using OpenAI TTS API."""
+    """Generate voiceover using OpenAI TTS API (tts-1-hd for warmer, human-like output)."""
     from openai import OpenAI
 
     client = OpenAI(api_key=config["openai"]["api_key"])
@@ -104,9 +104,10 @@ def _generate_voiceover_openai_tts(config: dict, texts: list[str],
     for i, text in enumerate(texts):
         get_limiter("openai_tts").acquire()
         response = client.audio.speech.create(
-            model="tts-1",
+            model="tts-1-hd",   # higher quality than tts-1, more human-like
             voice=tts_voice,
             input=text,
+            speed=0.95,         # slightly slower = warmer, more natural feel
         )
         filepath = os.path.join(output_dir, f"scene_{i+1}.mp3")
         response.stream_to_file(filepath)
@@ -117,29 +118,166 @@ def _generate_voiceover_openai_tts(config: dict, texts: list[str],
 
 def _generate_voiceover_elevenlabs(config: dict, texts: list[str],
                                     output_dir: str) -> list[str]:
-    """Generate voiceover using ElevenLabs API."""
+    """Generate voiceover using ElevenLabs API with native Hinglish support.
+
+    Uses eleven_multilingual_v2 (or eleven_v3 if configured) which auto-detects
+    Hindi words in Hinglish text and pronounces them with native Hindi phonemes —
+    no SSML markup needed. VoiceSettings tuned for warm, human, expressive feel.
+    """
     try:
         from elevenlabs.client import ElevenLabs
+        from elevenlabs import VoiceSettings
     except ImportError:
-        raise ImportError("Install elevenlabs package: pip install elevenlabs")
+        raise ImportError(
+            "Install elevenlabs: pip install elevenlabs>=1.0.0\n"
+            "Then set tts.provider: elevenlabs in config.yaml"
+        )
 
-    api_key = config.get("tts", {}).get("elevenlabs_api_key", "")
-    voice_id = config.get("tts", {}).get("elevenlabs_voice_id", "")
+    tts_cfg  = config.get("tts", {})
+    api_key  = tts_cfg.get("elevenlabs_api_key", "")
+    voice_id = tts_cfg.get("elevenlabs_voice_id", "")
+    model    = tts_cfg.get("elevenlabs_model", "eleven_multilingual_v2")
+
+    if not api_key:
+        raise ValueError("tts.elevenlabs_api_key is not set in config.yaml")
+    if not voice_id:
+        raise ValueError("tts.elevenlabs_voice_id is not set in config.yaml")
 
     client = ElevenLabs(api_key=api_key)
     audio_files = []
 
     for i, text in enumerate(texts):
         get_limiter("elevenlabs").acquire()
-        audio = client.generate(
+        # SDK v1.0+: client.generate() was removed — use text_to_speech.convert()
+        audio = client.text_to_speech.convert(
+            voice_id=voice_id,
             text=text,
-            voice=voice_id,
-            model="eleven_multilingual_v2",
+            model_id=model,
+            voice_settings=VoiceSettings(
+                stability=0.50,          # natural variation (not robotic)
+                similarity_boost=0.75,   # stays close to the original voice character
+                style=0.35,              # warm expressiveness — engaging but not overdone
+                use_speaker_boost=True,  # clarity boost for kids content
+            ),
+        )
+        filepath = os.path.join(output_dir, f"scene_{i+1}.mp3")
+        try:
+            with open(filepath, "wb") as f:
+                for chunk in audio:
+                    f.write(chunk)
+        except Exception as e:
+            err = str(e)
+            if "payment_required" in err or "402" in err:
+                raise RuntimeError(
+                    "\n\nElevenLabs 402 Payment Required:\n"
+                    "  The voice you selected is a community library voice — "
+                    "requires Starter plan ($5/mo) or higher.\n\n"
+                    "  Free tier options (update elevenlabs_voice_id in config.yaml):\n"
+                    "    Aria     — 9BWtsMINqrJLrRacOk9x  (warm, expressive female)\n"
+                    "    Sarah    — EXAVITQu4vr4xnSDxMaL  (clear female)\n"
+                    "    Charlotte — XB0fDUnXU5powFXDhCwa  (soft female)\n"
+                    "    Matilda  — XrExE9yKIg1WjnnlVkGX  (friendly female)\n\n"
+                    "  Or upgrade at https://elevenlabs.io/pricing to use Indian/Hindi voices."
+                ) from e
+            raise
+        audio_files.append(filepath)
+        time.sleep(0.3)   # brief pause to respect rate limits
+
+    return audio_files
+
+
+def _generate_voiceover_elevenlabs_lullaby(config: dict, texts: list[str],
+                                            output_dir: str) -> list[str]:
+    """ElevenLabs voiceover with calmer settings for lullaby/bedtime content.
+
+    Lower style (0.10) + higher stability (0.65) = consistent, soothing delivery.
+    """
+    try:
+        from elevenlabs.client import ElevenLabs
+        from elevenlabs import VoiceSettings
+    except ImportError:
+        raise ImportError("Install elevenlabs: pip install elevenlabs>=1.0.0")
+
+    tts_cfg  = config.get("tts", {})
+    api_key  = tts_cfg.get("elevenlabs_api_key", "")
+    voice_id = tts_cfg.get("elevenlabs_voice_id", "")
+    model    = tts_cfg.get("elevenlabs_model", "eleven_multilingual_v2")
+
+    client = ElevenLabs(api_key=api_key)
+    audio_files = []
+
+    for i, text in enumerate(texts):
+        get_limiter("elevenlabs").acquire()
+        audio = client.text_to_speech.convert(
+            voice_id=voice_id,
+            text=text,
+            model_id=model,
+            voice_settings=VoiceSettings(
+                stability=0.65,          # more consistent = calmer, less variation
+                similarity_boost=0.80,
+                style=0.10,              # minimal expressiveness for bedtime calm
+                use_speaker_boost=True,
+            ),
         )
         filepath = os.path.join(output_dir, f"scene_{i+1}.mp3")
         with open(filepath, "wb") as f:
             for chunk in audio:
                 f.write(chunk)
+        audio_files.append(filepath)
+        time.sleep(0.3)
+
+    return audio_files
+
+
+def _generate_voiceover_sarvam(config: dict, texts: list[str],
+                                output_dir: str, pace: float = 1.0) -> list[str]:
+    """Generate voiceover using Sarvam AI Bulbul v3 — purpose-built for Hinglish.
+
+    Sarvam AI is trained natively on code-mixed Hindi+English data. Hindi words
+    like 'chalo', 'bahut', 'pyara' are pronounced authentically with no preprocessing.
+
+    Sign up (free ₹1000 credits): https://api.sarvam.ai
+    Available speakers: meera, pavithra, maitreyi, arvind, amol, amartya
+    REST API limit: 500 chars/call — longer scenes are chunked automatically.
+    """
+    tts_cfg = config.get("tts", {})
+    api_key = tts_cfg.get("sarvam_api_key", "")
+    speaker = tts_cfg.get("sarvam_speaker", "meera")
+
+    if not api_key:
+        raise ValueError("tts.sarvam_api_key is not set in config.yaml")
+
+    import base64
+
+    def _sarvam_call(text_chunk: str) -> bytes:
+        r = requests.post(
+            "https://api.sarvam.ai/text-to-speech",
+            headers={"API-Subscription-Key": api_key},
+            json={
+                "inputs": [text_chunk],
+                "target_language_code": "hi-IN",   # hi-IN enables Hinglish mode
+                "speaker": speaker,
+                "pace": pace,
+                "enable_preprocessing": True,      # handles code-mixed text
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        return base64.b64decode(r.json()["audios"][0])
+
+    audio_files = []
+
+    for i, text in enumerate(texts):
+        # Chunk at 490 chars to stay within the 500-char REST API limit
+        chunks = [text[j:j + 490] for j in range(0, len(text), 490)]
+        combined = b""
+        for chunk in chunks:
+            combined += _sarvam_call(chunk)
+            time.sleep(0.2)
+
+        filepath = os.path.join(output_dir, f"scene_{i+1}.wav")
+        with open(filepath, "wb") as f:
+            f.write(combined)
         audio_files.append(filepath)
 
     return audio_files
@@ -176,7 +314,13 @@ def _generate_lullaby_voiceover_edge_tts(texts: list[str], output_dir: str,
 
 def generate_lullaby_voiceover(config: dict, script_data: dict, output_dir: str,
                                voice: str = None) -> list[str]:
-    """Generate lullaby voiceover at -10% speech rate (slower, calming). edge-tts only."""
+    """Generate lullaby voiceover using the configured TTS provider.
+
+    - edge-tts: rate=-10% (slower pace) for calming bedtime feel
+    - elevenlabs: style=0.10 + stability=0.65 (calm, consistent, soothing)
+    - openai: tts-1-hd at speed=0.90 (slightly slower than regular)
+    - sarvam: pace=0.85 (85% normal speed for calm delivery)
+    """
     if voice is None:
         voice = pick_voice(config, "hi")
 
@@ -184,15 +328,31 @@ def generate_lullaby_voiceover(config: dict, script_data: dict, output_dir: str,
     os.makedirs(audio_dir, exist_ok=True)
 
     texts = _build_scene_texts(script_data)
-    print("  Generating lullaby voiceover (slow pace, rate=-10%)...")
-    return _generate_lullaby_voiceover_edge_tts(texts, audio_dir, voice)
+    provider = config.get("tts", {}).get("provider", "edge-tts")
+    print(f"  Generating lullaby voiceover (calm pace) via {provider}...")
+
+    if provider == "elevenlabs":
+        return _generate_voiceover_elevenlabs_lullaby(config, texts, audio_dir)
+    elif provider == "openai":
+        return _generate_voiceover_openai_tts(config, texts, audio_dir, voice=voice)
+    elif provider == "sarvam":
+        return _generate_voiceover_sarvam(config, texts, audio_dir, pace=0.85)
+    else:
+        return _generate_lullaby_voiceover_edge_tts(texts, audio_dir, voice)
 
 
 def generate_voiceover(config: dict, script_data: dict, output_dir: str,
                        voice: str = None) -> list[str]:
-    """Generate voiceover using the configured TTS provider."""
+    """Generate voiceover using the configured TTS provider.
+
+    Supported providers (set tts.provider in config.yaml):
+      - "elevenlabs" — best for Hinglish: native Hindi+English code-switching (recommended)
+      - "sarvam"     — best native Hinglish: purpose-built Indian AI, free ₹1000 trial
+      - "openai"     — very human-sounding (tts-1-hd), no Indian accent
+      - "edge-tts"   — free, no API key, but robotic + Hindi words mispronounced
+    """
     if voice is None:
-        voice = pick_voice(config, "en")
+        voice = pick_voice(config, "hi")
 
     texts = _build_scene_texts(script_data)
     provider = config.get("tts", {}).get("provider", "edge-tts")
@@ -201,6 +361,8 @@ def generate_voiceover(config: dict, script_data: dict, output_dir: str,
         return _generate_voiceover_openai_tts(config, texts, output_dir, voice=voice)
     elif provider == "elevenlabs":
         return _generate_voiceover_elevenlabs(config, texts, output_dir)
+    elif provider == "sarvam":
+        return _generate_voiceover_sarvam(config, texts, output_dir)
     else:
         return _generate_voiceover_edge_tts(texts, output_dir, voice)
 

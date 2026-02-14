@@ -20,11 +20,26 @@ pexels:
   api_key: "YOUR_PEXELS_API_KEY"
 
 # TTS configuration
+# Best for Hinglish kids content:
+#   "elevenlabs" — native Hindi+English code-switching, very human (recommended)
+#   "sarvam"     — purpose-built Indian AI, most authentic Hinglish, free ₹1000 trial
+#   "openai"     — very human-sounding (tts-1-hd), no Indian accent
+#   "edge-tts"   — free, no API key, but robotic + mispronounces Hindi words
 tts:
-  provider: "edge-tts"  # options: "edge-tts" (Indian voices), "openai", "elevenlabs"
+  provider: "elevenlabs"
   openai_voice: "nova"
   elevenlabs_api_key: "YOUR_ELEVENLABS_API_KEY"
+  elevenlabs_model: "eleven_multilingual_v2"  # or "eleven_v3" (most expressive, uses ~2x credits)
+  # How to get a voice ID:
+  #   1. Go to https://elevenlabs.io/voice-library
+  #   2. Filter: Language=Hindi, Gender=Female
+  #   3. Preview voices — try "Priya", "Anika", or search Indian female voices
+  #   4. Click "Add to My Voices" then copy the Voice ID from your Voice Lab
   elevenlabs_voice_id: "YOUR_ELEVENLABS_VOICE_ID"
+  # Optional: Sarvam AI — most authentic native Hinglish (Indian startup, trained on Hinglish data)
+  # Sign up free at https://api.sarvam.ai (₹1000 free credits on signup)
+  # sarvam_api_key: "YOUR_SARVAM_API_KEY"
+  # sarvam_speaker: "meera"  # options: meera, pavithra, maitreyi, arvind, amol, amartya
 
 # Language configuration — Hinglish only (Indian accent voices)
 languages:
