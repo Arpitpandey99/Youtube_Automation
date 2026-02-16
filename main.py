@@ -155,7 +155,7 @@ def run_video_pipeline(config: dict, upload: bool = True) -> dict:
         # 8. Metadata + thumbnail
         print("[8] Generating metadata...")
         metadata = generate_metadata(config, topic_data, script_data, language=LANG_NAME)
-        yt_thumb  = generate_youtube_thumbnail(config, metadata, image_files[0], lang_dir)
+        yt_thumb  = generate_youtube_thumbnail(config, metadata, image_files[0], lang_dir, content_type="video")
         print(f"  Title: {metadata['title']}")
         log_run(run_dir, "metadata", "success", metadata)
         with open(os.path.join(lang_dir, "metadata.json"), "w") as f:
@@ -275,7 +275,7 @@ def run_shorts_pipeline(config: dict, upload: bool = True) -> dict:
         print("[8] Generating metadata...")
         metadata        = generate_metadata(config, topic_data, script_data, language=LANG_NAME)
         shorts_metadata = generate_shorts_metadata(metadata)
-        thumb           = generate_shorts_thumbnail(config, metadata, image_files[0], lang_dir)
+        thumb           = generate_shorts_thumbnail(config, metadata, image_files[0], lang_dir, content_type="shorts")
         print(f"  Title: {shorts_metadata['title']}")
         log_run(run_dir, "metadata", "success", shorts_metadata)
         with open(os.path.join(lang_dir, "metadata.json"), "w") as f:
@@ -388,7 +388,7 @@ def run_poem_pipeline(config: dict, upload: bool = True) -> dict:
         # 7. Metadata + thumbnail
         print("[7] Generating metadata...")
         metadata = generate_metadata(config, topic_data, script_data, language=LANG_NAME)
-        yt_thumb = generate_youtube_thumbnail(config, metadata, image_files[0], lang_dir)
+        yt_thumb = generate_youtube_thumbnail(config, metadata, image_files[0], lang_dir, content_type="poem")
         print(f"  Title: {metadata['title']}")
         log_run(run_dir, "metadata", "success", metadata)
         with open(os.path.join(lang_dir, "metadata.json"), "w") as f:
@@ -505,7 +505,7 @@ def run_lullaby_pipeline(config: dict, upload: bool = True) -> dict:
         # 7. Metadata + thumbnail
         print("[7] Generating metadata...")
         metadata = generate_metadata(config, topic_data, script_data, language=LANG_NAME)
-        yt_thumb = generate_youtube_thumbnail(config, metadata, image_files[0], lang_dir)
+        yt_thumb = generate_youtube_thumbnail(config, metadata, image_files[0], lang_dir, content_type="lullaby")
         print(f"  Title: {metadata['title']}")
         log_run(run_dir, "metadata", "success", metadata)
         with open(os.path.join(lang_dir, "metadata.json"), "w") as f:

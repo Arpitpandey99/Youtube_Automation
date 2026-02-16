@@ -1,0 +1,8 @@
+{
+  "id": "bunny_dreamer",
+  "name": "Bunny",
+  "description": "A soft white bunny with long floppy ears, a tiny pink nose, and a pastel purple scarf",
+  "image_prompt_prefix": "A soft white bunny with floppy ears and a pastel purple scarf as the main character,",
+  "content_types": ["poem", "lullaby"],
+  "personality_note": "dreamy, gentle, loves rhymes and stars"
+}

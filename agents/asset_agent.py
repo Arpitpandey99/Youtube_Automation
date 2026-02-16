@@ -283,6 +283,87 @@ def _generate_voiceover_sarvam(config: dict, texts: list[str],
     return audio_files
 
 
+def _generate_voiceover_google_tts(config: dict, texts: list[str],
+                                    output_dir: str,
+                                    speaking_rate: float = 1.0,
+                                    pitch: float = 0.0,
+                                    voice_key: str = "google_tts_voice_story") -> list[str]:
+    """Generate voiceover using Google Cloud TTS (Neural2/WaveNet) — best for Hinglish.
+
+    Neural2 en-IN voices handle Indian-accented Hinglish natively.
+    Supports full SSML: <prosody>, <break>, <emphasis> — unlike edge-tts.
+
+    Auth: set tts.google_tts_credentials in config.yaml (path to service account JSON)
+    or set GOOGLE_APPLICATION_CREDENTIALS env var for ADC.
+    """
+    try:
+        from google.cloud import texttospeech
+    except ImportError:
+        raise ImportError(
+            "Install Google Cloud TTS: pip install google-cloud-texttospeech>=2.0.0\n"
+            "Then set tts.provider: google in config.yaml"
+        )
+
+    tts_cfg = config.get("tts", {})
+    creds_path = tts_cfg.get("google_tts_credentials", "")
+    voice_name = tts_cfg.get(voice_key, "en-IN-Neural2-D")
+
+    if creds_path:
+        client = texttospeech.TextToSpeechClient.from_service_account_json(creds_path)
+    else:
+        client = texttospeech.TextToSpeechClient()  # ADC via GOOGLE_APPLICATION_CREDENTIALS
+
+    voice_params = texttospeech.VoiceSelectionParams(
+        language_code="en-IN",
+        name=voice_name,
+    )
+    audio_cfg = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.MP3,
+        speaking_rate=speaking_rate,
+        pitch=pitch,
+    )
+
+    audio_files = []
+    for i, text in enumerate(texts):
+        # Wrap in SSML speak tag — text is already sanitized (no < > & chars)
+        ssml = f"<speak>{text}</speak>"
+        print(f"    Scene {i+1}: {len(text)} chars via Google TTS ({voice_name})")
+        resp = client.synthesize_speech(
+            input=texttospeech.SynthesisInput(ssml=ssml),
+            voice=voice_params,
+            audio_config=audio_cfg,
+        )
+        filepath = os.path.join(output_dir, f"scene_{i+1}.mp3")
+        with open(filepath, "wb") as f:
+            f.write(resp.audio_content)
+        audio_files.append(filepath)
+        time.sleep(0.2)  # brief pause to avoid rate limiting
+
+    return audio_files
+
+
+def _generate_voiceover_google_tts_lullaby(config: dict, texts: list[str],
+                                            output_dir: str) -> list[str]:
+    """Google TTS lullaby variant — 80% rate, -2st pitch for calm bedtime delivery."""
+    return _generate_voiceover_google_tts(
+        config, texts, output_dir,
+        speaking_rate=0.80,
+        pitch=-2.0,
+        voice_key="google_tts_voice_lullaby",
+    )
+
+
+def _generate_voiceover_google_tts_poem(config: dict, texts: list[str],
+                                         output_dir: str) -> list[str]:
+    """Google TTS poem variant — 95% rate, clear rhythmic delivery for rhymes."""
+    return _generate_voiceover_google_tts(
+        config, texts, output_dir,
+        speaking_rate=0.95,
+        pitch=0.0,
+        voice_key="google_tts_voice_poem",
+    )
+
+
 def _generate_lullaby_voiceover_edge_tts(texts: list[str], output_dir: str,
                                           voice: str) -> list[str]:
     """Generate lullaby voiceover with slower rate (-10%) for a calming bedtime feel."""
@@ -331,7 +412,9 @@ def generate_lullaby_voiceover(config: dict, script_data: dict, output_dir: str,
     provider = config.get("tts", {}).get("provider", "edge-tts")
     print(f"  Generating lullaby voiceover (calm pace) via {provider}...")
 
-    if provider == "elevenlabs":
+    if provider == "google":
+        return _generate_voiceover_google_tts_lullaby(config, texts, audio_dir)
+    elif provider == "elevenlabs":
         return _generate_voiceover_elevenlabs_lullaby(config, texts, audio_dir)
     elif provider == "openai":
         return _generate_voiceover_openai_tts(config, texts, audio_dir, voice=voice)
@@ -346,8 +429,9 @@ def generate_voiceover(config: dict, script_data: dict, output_dir: str,
     """Generate voiceover using the configured TTS provider.
 
     Supported providers (set tts.provider in config.yaml):
-      - "elevenlabs" — best for Hinglish: native Hindi+English code-switching (recommended)
-      - "sarvam"     — best native Hinglish: purpose-built Indian AI, free ₹1000 trial
+      - "google"     — best for Hinglish: Neural2 en-IN, full SSML, uses GCP credits (recommended)
+      - "elevenlabs" — native Hindi+English code-switching, multilingual model
+      - "sarvam"     — purpose-built Indian AI, free ₹1000 trial
       - "openai"     — very human-sounding (tts-1-hd), no Indian accent
       - "edge-tts"   — free, no API key, but robotic + Hindi words mispronounced
     """
@@ -357,7 +441,9 @@ def generate_voiceover(config: dict, script_data: dict, output_dir: str,
     texts = _build_scene_texts(script_data)
     provider = config.get("tts", {}).get("provider", "edge-tts")
 
-    if provider == "openai":
+    if provider == "google":
+        return _generate_voiceover_google_tts(config, texts, output_dir)
+    elif provider == "openai":
         return _generate_voiceover_openai_tts(config, texts, output_dir, voice=voice)
     elif provider == "elevenlabs":
         return _generate_voiceover_elevenlabs(config, texts, output_dir)
@@ -367,6 +453,57 @@ def generate_voiceover(config: dict, script_data: dict, output_dir: str,
         return _generate_voiceover_edge_tts(texts, output_dir, voice)
 
 
+def generate_poem_voiceover(config: dict, script_data: dict, output_dir: str,
+                             voice: str = None) -> list[str]:
+    """Generate poem voiceover — slower rate for clear rhythmic rhyme delivery.
+
+    Routes to the poem-specific variant of the configured TTS provider.
+    Falls back to standard voiceover for providers without a poem variant.
+    """
+    if voice is None:
+        voice = pick_voice(config, "hi")
+
+    audio_dir = os.path.join(output_dir, "audio")
+    os.makedirs(audio_dir, exist_ok=True)
+
+    texts = _build_scene_texts(script_data)
+    provider = config.get("tts", {}).get("provider", "edge-tts")
+    print(f"  Generating poem voiceover (rhythmic pace) via {provider}...")
+
+    if provider == "google":
+        return _generate_voiceover_google_tts_poem(config, texts, audio_dir)
+    elif provider == "openai":
+        return _generate_voiceover_openai_tts(config, texts, audio_dir, voice=voice)
+    elif provider == "elevenlabs":
+        return _generate_voiceover_elevenlabs(config, texts, audio_dir)
+    elif provider == "sarvam":
+        return _generate_voiceover_sarvam(config, texts, audio_dir, pace=0.95)
+    else:
+        return _generate_voiceover_edge_tts(texts, audio_dir, voice)
+
+
+def _get_character_prompt_prefix(script_data: dict) -> str:
+    """Return character image_prompt_prefix if a character is assigned, else empty string.
+
+    Reads data/characters/<character_id>/reference_sheet.json.
+    Returns "" if no character assigned or the file is missing.
+    """
+    character_id = script_data.get("character_id", "")
+    if not character_id:
+        return ""
+    import json as _json
+    ref_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)),
+        "data", "characters", character_id, "reference_sheet.json"
+    )
+    try:
+        with open(ref_path) as f:
+            char = _json.load(f)
+        return char.get("image_prompt_prefix", "")
+    except (FileNotFoundError, KeyError):
+        return ""
+
+
 def generate_images_replicate(config: dict, script_data: dict, output_dir: str) -> list[str]:
     """Generate scene images using Replicate API (Flux Schnell - fast & cheap)."""
     import replicate
@@ -374,10 +511,12 @@ def generate_images_replicate(config: dict, script_data: dict, output_dir: str) 
     client = replicate.Client(api_token=config["replicate"]["api_token"])
     style = config["content"]["image_style"]
     model = config["replicate"]["model"]
+    char_prefix = _get_character_prompt_prefix(script_data)
     image_files = []
 
     for i, scene in enumerate(script_data["scenes"]):
-        prompt = f"{style}, {scene['visual_description']}, high quality, no text, no words, no letters"
+        base_prompt = f"{style}, {scene['visual_description']}, high quality, no text, no words, no letters"
+        prompt = f"{char_prefix} {base_prompt}" if char_prefix else base_prompt
 
         for attempt in range(5):
             try:
@@ -420,13 +559,15 @@ def generate_images_huggingface(config: dict, script_data: dict, output_dir: str
     api_token = config["huggingface"]["api_token"]
     model = config["huggingface"]["model"]
     style = config["content"]["image_style"]
+    char_prefix = _get_character_prompt_prefix(script_data)
     image_files = []
 
     headers = {"Authorization": f"Bearer {api_token}"}
     api_url = f"https://api-inference.huggingface.co/models/{model}"
 
     for i, scene in enumerate(script_data["scenes"]):
-        prompt = f"{style}, {scene['visual_description']}, high quality, no text, no words"
+        base_prompt = f"{style}, {scene['visual_description']}, high quality, no text, no words"
+        prompt = f"{char_prefix} {base_prompt}" if char_prefix else base_prompt
 
         for attempt in range(3):
             get_limiter("huggingface").acquire()
@@ -454,10 +595,12 @@ def generate_images_openai(config: dict, script_data: dict, output_dir: str) -> 
 
     client = OpenAI(api_key=config["openai"]["api_key"])
     style = config["content"]["image_style"]
+    char_prefix = _get_character_prompt_prefix(script_data)
     image_files = []
 
     for i, scene in enumerate(script_data["scenes"]):
-        prompt = f"{style}, {scene['visual_description']}, no text, no words"
+        base_prompt = f"{style}, {scene['visual_description']}, no text, no words"
+        prompt = f"{char_prefix} {base_prompt}" if char_prefix else base_prompt
 
         get_limiter("openai").acquire()
         response = client.images.generate(

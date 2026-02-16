@@ -1,4 +1,6 @@
 import json
+import os
+import random as _random
 from openai import OpenAI
 
 
@@ -20,6 +22,46 @@ LULLABY_TEMPLATES = {
     "gentle_animal_friends": ["The Sleepy Kitten", "Owl's Nighttime Song", "Bear's Cozy Cave"],
     "dreamland_journeys":    ["Sailing to Dreamland", "The Dream Train", "Cloud Castle Dreams"],
 }
+
+
+def _load_character(config: dict) -> dict | None:
+    """Load a character reference sheet based on config.content.character.
+
+    Returns the character dict, or None if use_characters is disabled or the
+    character file is missing. If character is "random", picks one at random.
+    """
+    content_cfg = config.get("content", {})
+    if not content_cfg.get("use_characters", False):
+        return None
+    character_id = content_cfg.get("character", "")
+    if not character_id:
+        return None
+
+    # Support "random" — pick any character from data/characters/
+    if character_id == "random":
+        chars_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "characters")
+        try:
+            candidates = [
+                d for d in os.listdir(chars_dir)
+                if os.path.isdir(os.path.join(chars_dir, d))
+            ]
+            if not candidates:
+                return None
+            character_id = _random.choice(candidates)
+        except FileNotFoundError:
+            return None
+
+    ref_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)),
+        "data", "characters", character_id, "reference_sheet.json"
+    )
+    try:
+        with open(ref_path) as f:
+            char = json.load(f)
+        char["id"] = character_id
+        return char
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
 
 
 def _get_brand_voice_instructions(config: dict) -> str:
@@ -45,6 +87,7 @@ def generate_script(config: dict, topic_data: dict, language: str = "English") -
     num_scenes = config["content"]["scenes_per_video"]
     duration = config["content"]["video_duration_minutes"]
     target_age = topic_data["target_age"]
+    character = _load_character(config)
 
     lang_instruction = ""
     if language == "Hindi":
@@ -72,6 +115,17 @@ IMPORTANT LANGUAGE RULES:
 
     brand_voice = _get_brand_voice_instructions(config)
 
+    # Character instruction — injected into prompt if a character is configured
+    character_instruction = ""
+    if character:
+        character_instruction = f"""
+CHARACTER CONSISTENCY:
+The main character appearing in this video is "{character['name']}".
+Description: {character['description']}
+Make sure "{character['name']}" appears in EVERY scene's visual_description.
+Example: "visual_description": "{character['name']} exploring a crystal cave filled with sparkling gems"
+"""
+
     prompt = f"""Write a YouTube video script for kids aged {target_age}.
 
 Topic: {topic_data["topic"]}
@@ -80,22 +134,28 @@ Target duration: {duration} minutes
 Number of scenes: {num_scenes}
 {lang_instruction}
 {brand_voice}
+{character_instruction}
 Rules:
 - Use simple, fun, engaging language for kids
 - Each scene narration should be 2-4 sentences
 - Include fun facts or questions to keep kids engaged
 - NO scary or inappropriate content
-- Start with an exciting hook
 - Write narration in a CONVERSATIONAL, ENTHUSIASTIC tone — like an excited friend telling a cool story
 - Use exclamation marks, rhetorical questions ("Can you believe that?!", "Isn't that amazing?!"), and dramatic pauses ("And guess what...")
 - Add emotional expressions: "Wow!", "Oh my goodness!", "That's SO cool!", "Whoa!"
 - Vary sentence length — mix short punchy sentences with slightly longer ones for natural rhythm
 - Avoid formal or robotic phrasing — write the way a fun, energetic storyteller would SPEAK, not write
 
+HOOK FORMAT — Choose the ONE format below that best fits the topic (must be topic-specific, HIGH ENERGY, max 2 sentences):
+  FORMAT A — Curiosity Question: "Kya tumhe pata hai? [1 surprising fact about {topic_data['topic']}]? Chalo find out karte hain!"
+  FORMAT B — Shocking Fact: "Did you know? [1 mind-blowing thing about {topic_data['topic']}]! Bahut amazing hai na?!"
+  FORMAT C — Challenge: "I bet you can't guess [intriguing mystery about {topic_data['topic']}]! Let's discover together!"
+Pick the format that creates the most curiosity about this specific topic. Never use a generic opener like "Hey there little explorers!" alone.
+
 Respond in this exact JSON format:
 {{
     "title": "video title",
-    "intro_hook": "an exciting 1-sentence opening hook",
+    "intro_hook": "topic-specific exciting hook using one of the 3 formats above",
     "scenes": [
         {{
             "scene_number": 1,
@@ -125,6 +185,9 @@ Only return the JSON, nothing else."""
     )
 
     script_data = json.loads(response.choices[0].message.content.strip())
+    # Attach character_id so image generation can inject the character into prompts
+    if character:
+        script_data["character_id"] = character["id"]
     return script_data
 
 
@@ -219,6 +282,10 @@ Only return JSON, nothing else."""
     for i, scene in enumerate(translated.get("scenes", [])):
         if i < len(en_script["scenes"]):
             scene["visual_description"] = en_script["scenes"][i]["visual_description"]
+
+    # Preserve character_id so image generation stays consistent across languages
+    if "character_id" in en_script:
+        translated["character_id"] = en_script["character_id"]
 
     return translated
 

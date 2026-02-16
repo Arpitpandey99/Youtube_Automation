@@ -21,23 +21,31 @@ pexels:
 
 # TTS configuration
 # Best for Hinglish kids content:
-#   "elevenlabs" — native Hindi+English code-switching, very human (recommended)
+#   "google"     — Neural2/WaveNet en-IN, full SSML, uses GCP credits (recommended)
+#   "elevenlabs" — native Hindi+English code-switching, multilingual model
 #   "sarvam"     — purpose-built Indian AI, most authentic Hinglish, free ₹1000 trial
 #   "openai"     — very human-sounding (tts-1-hd), no Indian accent
 #   "edge-tts"   — free, no API key, but robotic + mispronounces Hindi words
 tts:
-  provider: "elevenlabs"
+  provider: "google"
+  # Google Cloud TTS — uses GCP credits ($300 free tier on new accounts)
+  # Setup:
+  #   1. Enable "Cloud Text-to-Speech API" in your GCP project
+  #   2. Create a service account (IAM → Service Accounts → Create → Role: Cloud Text-to-Speech User)
+  #   3. Download JSON key → set path below
+  google_tts_credentials: ""               # e.g. "/home/ec2-user/gcp-key.json"
+  google_tts_voice_story: "en-IN-Neural2-D"    # warm female Indian English — stories & videos
+  google_tts_voice_lullaby: "en-IN-Neural2-D"  # same voice, slower rate + lower pitch at runtime
+  google_tts_voice_poem: "en-IN-Neural2-A"     # clear female — rhythmic rhyme delivery
+  # Premium (higher GCP cost, ultra-realistic Chirp3 HD):
+  # google_tts_voice_story: "en-IN-Chirp-HD-F"
+  # google_tts_voice_poem: "en-IN-Chirp-HD-O"
+  # --- ElevenLabs (alternative) ---
   openai_voice: "nova"
-  elevenlabs_api_key: "YOUR_ELEVENLABS_API_KEY"
-  elevenlabs_model: "eleven_multilingual_v2"  # or "eleven_v3" (most expressive, uses ~2x credits)
-  # How to get a voice ID:
-  #   1. Go to https://elevenlabs.io/voice-library
-  #   2. Filter: Language=Hindi, Gender=Female
-  #   3. Preview voices — try "Priya", "Anika", or search Indian female voices
-  #   4. Click "Add to My Voices" then copy the Voice ID from your Voice Lab
-  elevenlabs_voice_id: "YOUR_ELEVENLABS_VOICE_ID"
-  # Optional: Sarvam AI — most authentic native Hinglish (Indian startup, trained on Hinglish data)
-  # Sign up free at https://api.sarvam.ai (₹1000 free credits on signup)
+  # elevenlabs_api_key: "YOUR_ELEVENLABS_API_KEY"
+  # elevenlabs_model: "eleven_multilingual_v2"
+  # elevenlabs_voice_id: "9BWtsMINqrJLrRacOk9x"  # Aria — free pre-made voice
+  # --- Sarvam AI (alternative, most authentic Hinglish) ---
   # sarvam_api_key: "YOUR_SARVAM_API_KEY"
   # sarvam_speaker: "meera"  # options: meera, pavithra, maitreyi, arvind, amol, amartya
 
@@ -73,6 +81,10 @@ content:
   video_duration_minutes: 3
   scenes_per_video: 6
   image_style: "soft watercolor illustration, smooth edges, pastel colors, gentle dreamy look, kid-friendly, no sharp lines, no text, no words"
+  # Character consistency — same character appears in every scene image of a video
+  # Options: "teddy_bear_friend", "bunny_dreamer", "owl_storyteller", "random", or "" to disable
+  use_characters: true
+  character: "teddy_bear_friend"
 
 # Scheduler
 schedule:

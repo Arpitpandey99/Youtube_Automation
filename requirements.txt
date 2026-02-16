@@ -13,5 +13,8 @@ replicate>=0.15.0
 # ElevenLabs TTS — native Hinglish support (tts.provider=elevenlabs, recommended)
 elevenlabs>=1.0.0
 
+# Google Cloud TTS — WaveNet/Neural2 voices, uses GCP credits (tts.provider=google, recommended)
+google-cloud-texttospeech>=2.0.0
+
 # Optional: Prefect orchestration (only if orchestration.engine=prefect)
 # prefect>=3.0.0

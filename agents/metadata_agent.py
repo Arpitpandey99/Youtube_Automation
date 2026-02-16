@@ -139,43 +139,108 @@ def generate_shorts_metadata(metadata: dict) -> dict:
 
 def _load_font(size: int):
     """Try to load a bold font, fall back to default."""
-    try:
-        return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size)
-    except (OSError, IOError):
+    for path in (
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "arial.ttf",
+    ):
         try:
-            return ImageFont.truetype("arial.ttf", size)
+            return ImageFont.truetype(path, size)
         except (OSError, IOError):
-            return ImageFont.load_default()
+            continue
+    return ImageFont.load_default()
 
 
-def _draw_thumbnail_text(draw: ImageDraw.Draw, text: str, font, img_width: int, img_height: int):
-    """Draw centered text with background and outline on a thumbnail."""
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
+# ── Content-type colour themes ─────────────────────────────────────────────
+_THUMB_THEMES = {
+    "lullaby": {
+        "gradient": (70, 30, 130),
+        "border1": (160, 120, 220),
+        "border2": (200, 170, 255),
+        "accent": (220, 200, 255),
+    },
+    "poem": {
+        "gradient": (190, 50, 85),
+        "border1": (255, 120, 160),
+        "border2": (255, 200, 220),
+        "accent": (255, 200, 220),
+    },
+    "video": {
+        "gradient": (190, 90, 10),
+        "border1": (255, 200, 0),
+        "border2": (255, 140, 0),
+        "accent": (255, 230, 100),
+    },
+}
+_THUMB_THEMES["story"] = _THUMB_THEMES["video"]
+_THUMB_THEMES["shorts"] = _THUMB_THEMES["video"]
 
-    x = (img_width - text_width) // 2
-    y = (img_height - text_height) // 2
 
-    # Draw background rectangle
-    padding = 20
-    draw.rectangle(
-        [x - padding, y - padding, x + text_width + padding, y + text_height + padding],
-        fill=(255, 50, 50, 200),
-    )
+def _apply_gradient_overlay(img: Image.Image, content_type: str) -> Image.Image:
+    """Apply a semi-transparent gradient strip to the bottom 40% of the image."""
+    theme = _THUMB_THEMES.get(content_type, _THUMB_THEMES["video"])
+    base_color = theme["gradient"]
+    w, h = img.size
+    strip_h = int(h * 0.42)
 
-    # Draw text with outline
-    for dx in [-3, 0, 3]:
-        for dy in [-3, 0, 3]:
-            draw.text((x + dx, y + dy), text, font=font, fill="black")
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    for y in range(strip_h):
+        alpha = int(195 * (y / strip_h))
+        draw.line([(0, h - strip_h + y), (w, h - strip_h + y)], fill=(*base_color, alpha))
+
+    img_rgba = img.convert("RGBA")
+    result = Image.alpha_composite(img_rgba, overlay)
+    return result.convert("RGB")
+
+
+def _draw_text_with_shadow(draw: ImageDraw.Draw, text: str, font,
+                            x: int, y: int, shadow_offset: int = 4):
+    """Draw white text with a dark drop shadow for depth and readability."""
+    draw.text((x + shadow_offset, y + shadow_offset), text, font=font, fill=(15, 15, 15))
     draw.text((x, y), text, font=font, fill="white")
 
 
-def _draw_border(draw: ImageDraw.Draw, width: int, height: int, border_width: int = 8):
-    """Draw alternating yellow/red border."""
+def _draw_border_themed(draw: ImageDraw.Draw, width: int, height: int,
+                         content_type: str, border_width: int = 8):
+    """Draw a themed alternating-colour border based on content type."""
+    theme = _THUMB_THEMES.get(content_type, _THUMB_THEMES["video"])
     for i in range(border_width):
-        color = (255, 255, 0) if i % 2 == 0 else (255, 50, 50)
+        color = theme["border1"] if i % 2 == 0 else theme["border2"]
         draw.rectangle([i, i, width - 1 - i, height - 1 - i], outline=color)
+
+
+def _draw_corner_accents(draw: ImageDraw.Draw, width: int, height: int,
+                          content_type: str):
+    """Draw small decorative accents in the four corners.
+
+    - lullaby: filled circles (stars)
+    - poem: diamond shapes (sparkles)
+    - video/story: small square dots
+    """
+    theme = _THUMB_THEMES.get(content_type, _THUMB_THEMES["video"])
+    color = theme["accent"]
+    r, margin = 10, 22
+    corners = [
+        (margin, margin),
+        (width - margin - r * 2, margin),
+        (margin, height - margin - r * 2),
+        (width - margin - r * 2, height - margin - r * 2),
+    ]
+    if content_type == "lullaby":
+        for cx, cy in corners:
+            draw.ellipse([cx, cy, cx + r * 2, cy + r * 2], fill=color)
+    elif content_type == "poem":
+        for cx, cy in corners:
+            mid_x, mid_y = cx + r, cy + r
+            draw.polygon(
+                [(mid_x, cy), (cx + r * 2, mid_y), (mid_x, cy + r * 2), (cx, mid_y)],
+                fill=color,
+            )
+    else:
+        for cx, cy in corners:
+            draw.rectangle([cx, cy, cx + r * 2, cy + r * 2], fill=color)
 
 
 def _prepare_vertical_thumbnail(image_path: str, target_w: int = 1080, target_h: int = 1920) -> Image.Image:
@@ -205,21 +270,31 @@ def _prepare_vertical_thumbnail(image_path: str, target_w: int = 1080, target_h:
     return bg
 
 
-def generate_thumbnail(config: dict, metadata: dict, first_image_path: str, output_dir: str) -> str:
+def generate_thumbnail(config: dict, metadata: dict, first_image_path: str,
+                       output_dir: str, content_type: str = "video") -> str:
     """Generate a YouTube thumbnail (1280x720) from the first scene image."""
-    return generate_youtube_thumbnail(config, metadata, first_image_path, output_dir)
+    return generate_youtube_thumbnail(config, metadata, first_image_path, output_dir, content_type)
 
 
 def generate_youtube_thumbnail(config: dict, metadata: dict, first_image_path: str,
-                               output_dir: str) -> str:
-    """Generate a horizontal YouTube thumbnail (1280x720)."""
+                               output_dir: str, content_type: str = "video") -> str:
+    """Generate a horizontal YouTube thumbnail (1280x720) with themed gradient overlay."""
     img = Image.open(first_image_path).resize((1280, 720), Image.LANCZOS)
+    img = _apply_gradient_overlay(img, content_type)
+
     draw = ImageDraw.Draw(img)
     text = metadata["thumbnail_text"].upper()
-    font = _load_font(90)
+    font = _load_font(110)  # larger than before (was 90)
 
-    _draw_thumbnail_text(draw, text, font, 1280, 720)
-    _draw_border(draw, 1280, 720)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    x = (1280 - text_w) // 2
+    y = int(720 * 0.62) - text_h // 2  # lower zone in the gradient strip
+
+    _draw_text_with_shadow(draw, text, font, x, y)
+    _draw_border_themed(draw, 1280, 720, content_type)
+    _draw_corner_accents(draw, 1280, 720, content_type)
 
     thumbnail_path = os.path.join(output_dir, "thumbnail.png")
     img.save(thumbnail_path, quality=95)
@@ -227,16 +302,24 @@ def generate_youtube_thumbnail(config: dict, metadata: dict, first_image_path: s
 
 
 def generate_instagram_thumbnail(config: dict, metadata: dict, first_image_path: str,
-                                 output_dir: str) -> str:
-    """Generate a vertical Instagram thumbnail (1080x1920) with blurred background."""
+                                 output_dir: str, content_type: str = "video") -> str:
+    """Generate a vertical Instagram thumbnail (1080x1920) with themed gradient overlay."""
     img = _prepare_vertical_thumbnail(first_image_path, 1080, 1920)
+    img = _apply_gradient_overlay(img, content_type)
 
     draw = ImageDraw.Draw(img)
     text = metadata["thumbnail_text"].upper()
-    font = _load_font(72)
+    font = _load_font(88)  # larger than before (was 72)
 
-    _draw_thumbnail_text(draw, text, font, 1080, 1920)
-    _draw_border(draw, 1080, 1920)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    x = (1080 - text_w) // 2
+    y = int(1920 * 0.62) - text_h // 2
+
+    _draw_text_with_shadow(draw, text, font, x, y)
+    _draw_border_themed(draw, 1080, 1920, content_type)
+    _draw_corner_accents(draw, 1080, 1920, content_type)
 
     thumbnail_path = os.path.join(output_dir, "thumbnail_ig.png")
     img.save(thumbnail_path, quality=95)
@@ -244,16 +327,24 @@ def generate_instagram_thumbnail(config: dict, metadata: dict, first_image_path:
 
 
 def generate_shorts_thumbnail(config: dict, metadata: dict, first_image_path: str,
-                              output_dir: str) -> str:
-    """Generate a vertical Shorts thumbnail (1080x1920) with blurred background."""
+                              output_dir: str, content_type: str = "video") -> str:
+    """Generate a vertical Shorts thumbnail (1080x1920) with themed gradient overlay."""
     img = _prepare_vertical_thumbnail(first_image_path, 1080, 1920)
+    img = _apply_gradient_overlay(img, content_type)
 
     draw = ImageDraw.Draw(img)
     text = metadata["thumbnail_text"].upper()
-    font = _load_font(80)
+    font = _load_font(96)  # larger than before (was 80)
 
-    _draw_thumbnail_text(draw, text, font, 1080, 1920)
-    _draw_border(draw, 1080, 1920, border_width=6)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    x = (1080 - text_w) // 2
+    y = int(1920 * 0.62) - text_h // 2
+
+    _draw_text_with_shadow(draw, text, font, x, y)
+    _draw_border_themed(draw, 1080, 1920, content_type, border_width=6)
+    _draw_corner_accents(draw, 1080, 1920, content_type)
 
     thumbnail_path = os.path.join(output_dir, "thumbnail_shorts.png")
     img.save(thumbnail_path, quality=95)
