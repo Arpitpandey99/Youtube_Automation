@@ -20,8 +20,11 @@ jobs:
             set -e  # Exit immediately if any command fails
             cd ~/youtube_automation
 
+            # Reset any files in conflict state (topics_history.json)
+            git reset --hard HEAD
+
             # Stash any local changes (topics_history.json gets modified by running pipeline)
-            git stash push -u -m "Auto-stash before deploy $(date)"
+            git stash push -u -m "Auto-stash before deploy $(date)" || true
 
             # Pull latest code
             git pull origin main
