@@ -218,7 +218,7 @@ def assemble_shorts(config: dict, script_data: dict, assets: dict, output_dir: s
     """
     scene_clips = []
     total_duration = 0.0
-    max_duration = 59.0
+    max_duration = config.get("shorts", {}).get("max_duration", 59.0)
 
     use_script = shorts_script or script_data
     use_audio = shorts_audio_files or assets["audio_files"]
@@ -488,7 +488,7 @@ def assemble_animated_shorts(config: dict, script_data: dict,
     shorts_res = (1080, 1920)
     scene_clips = []
     total_duration = 0.0
-    max_duration = 59.0
+    max_duration = config.get("shorts", {}).get("max_duration", 59.0)
 
     use_script = shorts_script or script_data
     use_audio = shorts_audio or audio_files

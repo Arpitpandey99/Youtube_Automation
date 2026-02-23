@@ -1,5 +1,7 @@
 import time
+import random
 import requests
+from datetime import datetime, timedelta
 
 
 GRAPH_API_BASE = "https://graph.facebook.com"
@@ -25,6 +27,49 @@ def _upload_to_temp_host(video_path: str) -> str:
     url = data["data"]["url"]
     direct_url = url.replace("tmpfiles.org/", "tmpfiles.org/dl/", 1)
     return direct_url
+
+
+def _validate_token(config: dict) -> bool:
+    """Check if Instagram access token is still valid.
+
+    Long-lived tokens expire after 60 days. Returns True if valid.
+    """
+    ig_config = config["instagram"]
+    access_token = ig_config["access_token"]
+    api_version = ig_config.get("graph_api_version", "v21.0")
+    ig_user_id = ig_config["ig_user_id"]
+
+    url = f"{GRAPH_API_BASE}/{api_version}/{ig_user_id}"
+    params = {"fields": "id", "access_token": access_token}
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            return True
+        elif response.status_code == 190:
+            print("  Instagram: Access token expired (error 190)")
+            print("  Renew at: https://developers.facebook.com/tools/explorer/")
+            return False
+        else:
+            print(f"  Instagram: Token validation failed ({response.status_code})")
+            return False
+    except Exception as e:
+        print(f"  Instagram: Token validation error: {e}")
+        return False
+
+
+def _apply_posting_jitter(config: dict):
+    """Wait random time before posting to avoid spam detection."""
+    ig_config = config["instagram"]
+    min_wait = ig_config.get("posting_jitter_min", 5) * 60
+    max_wait = ig_config.get("posting_jitter_max", 30) * 60
+
+    wait_seconds = random.randint(min_wait, max_wait)
+    wait_minutes = wait_seconds / 60
+
+    print(f"  Instagram: Jitter delay ({wait_minutes:.1f} min)...")
+    print(f"  Instagram: Will post at {(datetime.now() + timedelta(seconds=wait_seconds)).strftime('%H:%M:%S')}")
+    time.sleep(wait_seconds)
 
 
 def _wait_for_container(container_id: str, access_token: str,
@@ -61,22 +106,31 @@ def upload_reel(config: dict, video_path: str, caption: str,
     """Upload a video as an Instagram Reel using the official Graph API.
 
     Flow:
-    1. Upload video to temporary public host
-    2. Create media container (REELS type)
-    3. Poll until container is ready
-    4. Publish the container
+    1. Validate token
+    2. Apply posting jitter (anti-spam)
+    3. Upload video to temporary public host
+    4. Create media container (REELS type)
+    5. Poll until container is ready
+    6. Publish the container
     """
+    # Step 0: Validate token before upload
+    if not _validate_token(config):
+        raise Exception("Instagram token invalid/expired. Skipping upload.")
+
+    # Step 1: Apply posting jitter (anti-spam)
+    _apply_posting_jitter(config)
+
     ig_config = config["instagram"]
     ig_user_id = ig_config["ig_user_id"]
     access_token = ig_config["access_token"]
     api_version = ig_config.get("graph_api_version", "v21.0")
 
-    # Step 1: Get a public URL for the video
+    # Step 2: Get a public URL for the video
     print("  Instagram: uploading video to temp host...")
     video_url = _upload_to_temp_host(video_path)
     print(f"  Instagram: temp URL obtained")
 
-    # Step 2: Create media container
+    # Step 3: Create media container
     create_url = f"{GRAPH_API_BASE}/{api_version}/{ig_user_id}/media"
     create_params = {
         "media_type": "REELS",
@@ -91,11 +145,11 @@ def upload_reel(config: dict, video_path: str, caption: str,
     container_id = response.json()["id"]
     print(f"  Instagram: container created ({container_id})")
 
-    # Step 3: Wait for processing
+    # Step 4: Wait for processing
     print("  Instagram: waiting for video processing...")
     _wait_for_container(container_id, access_token, api_version)
 
-    # Step 4: Publish
+    # Step 5: Publish
     publish_url = f"{GRAPH_API_BASE}/{api_version}/{ig_user_id}/media_publish"
     publish_params = {
         "creation_id": container_id,

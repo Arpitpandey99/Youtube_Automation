@@ -516,7 +516,7 @@ def generate_images_replicate(config: dict, script_data: dict, output_dir: str) 
 
     for i, scene in enumerate(script_data["scenes"]):
         base_prompt = f"{style}, {scene['visual_description']}, high quality, no text, no words, no letters"
-        prompt = f"{char_prefix} {base_prompt}" if char_prefix else base_prompt
+        prompt = f"{base_prompt} {char_prefix}" if char_prefix else base_prompt
 
         for attempt in range(5):
             try:
@@ -567,7 +567,7 @@ def generate_images_huggingface(config: dict, script_data: dict, output_dir: str
 
     for i, scene in enumerate(script_data["scenes"]):
         base_prompt = f"{style}, {scene['visual_description']}, high quality, no text, no words"
-        prompt = f"{char_prefix} {base_prompt}" if char_prefix else base_prompt
+        prompt = f"{base_prompt} {char_prefix}" if char_prefix else base_prompt
 
         for attempt in range(3):
             get_limiter("huggingface").acquire()
@@ -600,7 +600,7 @@ def generate_images_openai(config: dict, script_data: dict, output_dir: str) -> 
 
     for i, scene in enumerate(script_data["scenes"]):
         base_prompt = f"{style}, {scene['visual_description']}, no text, no words"
-        prompt = f"{char_prefix} {base_prompt}" if char_prefix else base_prompt
+        prompt = f"{base_prompt} {char_prefix}" if char_prefix else base_prompt
 
         get_limiter("openai").acquire()
         response = client.images.generate(

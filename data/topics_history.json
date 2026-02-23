@@ -202,5 +202,35 @@
     "category": "science",
     "target_age": "3-8",
     "description": "Discover the magical world of crystals and how they form in nature!"
+  },
+  {
+    "topic": "Jolly Jellyfish: The Incredible Life of Sea Jellies!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Dive into the colorful world of jellyfish and discover their unique features and fascinating behaviors!"
+  },
+  {
+    "topic": "Funky Flora: The Coolest Plants on Earth!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Explore the most unique and interesting plants around the world and their amazing adaptations!"
+  },
+  {
+    "topic": "Jumpy Jungle Jamboree: A Rhyming Adventure with Rainforest Friends!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Join us in a fun rhyming poem exploring the playful animals and vibrant plants of the jungle!"
+  },
+  {
+    "topic": "Wonderful Whales: The Giants of the Ocean!",
+    "category": "animals",
+    "target_age": "3-8",
+    "description": "Explore the amazing world of whales, their sizes, songs, and the habitats they call home!"
+  },
+  {
+    "topic": "Giggles in the Garden: The Life of Bugs and Blossoms!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Explore the colorful world of gardens and the amazing bugs that help them grow!"
   }
 ]

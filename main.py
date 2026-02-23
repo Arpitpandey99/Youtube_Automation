@@ -75,13 +75,61 @@ def _prepare_config(config: dict) -> dict:
 
 
 def _cleanup(lang_dir: str, image_dir: str):
-    """Remove large intermediate files after a successful upload."""
+    """Remove large intermediate files after video assembly."""
     for folder in ["audio", "animated_clips"]:
         p = os.path.join(lang_dir, folder)
         if os.path.exists(p):
             shutil.rmtree(p)
     if os.path.exists(image_dir):
         shutil.rmtree(image_dir)
+
+
+def cleanup_old_output_dirs(days_old: int = 7, dry_run: bool = True):
+    """Remove intermediate files from old output directories.
+
+    Keeps final outputs (videos, thumbnails, metadata, SRT) but removes
+    large intermediate files from runs older than the specified number of days.
+
+    Args:
+        days_old: Only clean runs older than this many days
+        dry_run: If True, prints what would be deleted without deleting
+    """
+    import time
+
+    output_base = os.path.join(BASE_DIR, "output")
+    if not os.path.exists(output_base):
+        return
+
+    cutoff_time = time.time() - (days_old * 86400)
+    cleaned_bytes = 0
+
+    for run_dir in os.listdir(output_base):
+        run_path = os.path.join(output_base, run_dir)
+        if not os.path.isdir(run_path):
+            continue
+
+        mtime = os.path.getmtime(run_path)
+        if mtime >= cutoff_time:
+            continue
+
+        # Clean intermediate folders: audio, animated_clips, images
+        for root, dirs, files in os.walk(run_path):
+            for dir_name in ["audio", "animated_clips", "images"]:
+                if dir_name in dirs:
+                    target = os.path.join(root, dir_name)
+                    size = sum(
+                        os.path.getsize(os.path.join(dp, f))
+                        for dp, dn, fn in os.walk(target)
+                        for f in fn
+                    )
+                    if dry_run:
+                        print(f"  Would delete: {target} ({size // 1024} KB)")
+                    else:
+                        shutil.rmtree(target)
+                        print(f"  Deleted: {target} ({size // 1024} KB)")
+                    cleaned_bytes += size
+
+    print(f"\nTotal: {cleaned_bytes // (1024*1024)} MB {'would be' if dry_run else ''} freed")
 
 
 # ── Video pipeline (2–3 min landscape) ───────────────────────────────────────
@@ -182,8 +230,31 @@ def run_video_pipeline(config: dict, upload: bool = True) -> dict:
         else:
             print("[9] Upload skipped (--no-upload mode)")
 
-        if upload:
-            _cleanup(lang_dir, image_dir)
+        # 10. Instagram upload (optional)
+        ig_config = config.get("instagram", {})
+        if upload and ig_config.get("enabled") and ig_config.get("upload_video"):
+            try:
+                print("[10] Uploading to Instagram...")
+                from agents.instagram_agent import upload_reel, build_reel_caption
+                from agents.metadata_agent import generate_instagram_metadata
+
+                ig_metadata = generate_instagram_metadata(config, topic_data, script_data, language=LANG_NAME)
+                caption = build_reel_caption(metadata, LANG_NAME, ig_metadata)
+
+                reel_path = os.path.join(lang_dir, "shorts_video.mp4")
+                if not os.path.exists(reel_path):
+                    reel_path = video_path
+
+                reel_url = upload_reel(config, reel_path, caption)
+                result["instagram_url"] = reel_url
+                log_run(run_dir, "instagram_upload", "success", {"url": reel_url})
+                print(f"  Instagram Reel live: {reel_url}")
+            except Exception as e:
+                print(f"  Instagram upload failed: {e}")
+                log_run(run_dir, "instagram_upload", "failed", {"error": str(e)})
+
+        # Always cleanup intermediate files after video assembly
+        _cleanup(lang_dir, image_dir)
 
         run_summary["videos"].append(result)
 
@@ -302,8 +373,27 @@ def run_shorts_pipeline(config: dict, upload: bool = True) -> dict:
         else:
             print("[9] Upload skipped (--no-upload mode)")
 
-        if upload:
-            _cleanup(lang_dir, image_dir)
+        # 10. Instagram upload (optional)
+        ig_config = config.get("instagram", {})
+        if upload and ig_config.get("enabled") and ig_config.get("upload_shorts"):
+            try:
+                print("[10] Uploading to Instagram...")
+                from agents.instagram_agent import upload_reel, build_reel_caption
+                from agents.metadata_agent import generate_instagram_metadata
+
+                ig_metadata = generate_instagram_metadata(config, topic_data, script_data, language=LANG_NAME)
+                caption = build_reel_caption(shorts_metadata, LANG_NAME, ig_metadata)
+
+                reel_url = upload_reel(config, shorts_path, caption, thumb)
+                result["instagram_url"] = reel_url
+                log_run(run_dir, "instagram_upload", "success", {"url": reel_url})
+                print(f"  Instagram Reel live: {reel_url}")
+            except Exception as e:
+                print(f"  Instagram upload failed: {e}")
+                log_run(run_dir, "instagram_upload", "failed", {"error": str(e)})
+
+        # Always cleanup intermediate files after video assembly
+        _cleanup(lang_dir, image_dir)
 
         run_summary["videos"].append(result)
 
@@ -413,8 +503,27 @@ def run_poem_pipeline(config: dict, upload: bool = True) -> dict:
         else:
             print("[8] Upload skipped (--no-upload mode)")
 
-        if upload:
-            _cleanup(lang_dir, image_dir)
+        # 9. Instagram upload (optional)
+        ig_config = config.get("instagram", {})
+        if upload and ig_config.get("enabled") and ig_config.get("upload_poem"):
+            try:
+                print("[9] Uploading to Instagram...")
+                from agents.instagram_agent import upload_reel, build_reel_caption
+                from agents.metadata_agent import generate_instagram_metadata
+
+                ig_metadata = generate_instagram_metadata(config, topic_data, script_data, language=LANG_NAME)
+                caption = build_reel_caption(metadata, LANG_NAME, ig_metadata)
+
+                reel_url = upload_reel(config, video_path, caption, yt_thumb)
+                result["instagram_url"] = reel_url
+                log_run(run_dir, "instagram_upload", "success", {"url": reel_url})
+                print(f"  Instagram Reel live: {reel_url}")
+            except Exception as e:
+                print(f"  Instagram upload failed: {e}")
+                log_run(run_dir, "instagram_upload", "failed", {"error": str(e)})
+
+        # Always cleanup intermediate files after video assembly
+        _cleanup(lang_dir, image_dir)
 
         run_summary["videos"].append(result)
 
@@ -530,8 +639,27 @@ def run_lullaby_pipeline(config: dict, upload: bool = True) -> dict:
         else:
             print("[8] Upload skipped (--no-upload mode)")
 
-        if upload:
-            _cleanup(lang_dir, image_dir)
+        # 9. Instagram upload (optional)
+        ig_config = config.get("instagram", {})
+        if upload and ig_config.get("enabled") and ig_config.get("upload_lullaby"):
+            try:
+                print("[9] Uploading to Instagram...")
+                from agents.instagram_agent import upload_reel, build_reel_caption
+                from agents.metadata_agent import generate_instagram_metadata
+
+                ig_metadata = generate_instagram_metadata(config, topic_data, script_data, language=LANG_NAME)
+                caption = build_reel_caption(metadata, LANG_NAME, ig_metadata)
+
+                reel_url = upload_reel(config, video_path, caption, yt_thumb)
+                result["instagram_url"] = reel_url
+                log_run(run_dir, "instagram_upload", "success", {"url": reel_url})
+                print(f"  Instagram Reel live: {reel_url}")
+            except Exception as e:
+                print(f"  Instagram upload failed: {e}")
+                log_run(run_dir, "instagram_upload", "failed", {"error": str(e)})
+
+        # Always cleanup intermediate files after video assembly
+        _cleanup(lang_dir, image_dir)
 
         run_summary["videos"].append(result)
 
@@ -762,10 +890,18 @@ if __name__ == "__main__":
         print("  python main.py --schedule                 # scheduler: video 9AM, shorts 9PM")
         print("  python main.py --generate-music           # download 10 kids music tracks")
         print("  python main.py --generate-lullaby-music   # download lullaby music tracks")
+        print("  python main.py --cleanup-old [--days 7] [--dry-run]  # clean old intermediate files")
     elif "--generate-lullaby-music" in args:
         generate_lullaby_music_library(config)
     elif "--generate-music" in args:
         generate_music_library(config)
+    elif "--cleanup-old" in args:
+        days = 7
+        dry_run = "--dry-run" not in args
+        if "--days" in args:
+            idx = args.index("--days")
+            days = int(args[idx + 1])
+        cleanup_old_output_dirs(days_old=days, dry_run=dry_run)
     elif "--schedule" in args:
         start_scheduler(config)
     elif "--lullaby" in args:

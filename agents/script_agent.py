@@ -309,7 +309,11 @@ Keep visual_description in English."""
 Write the intro_hook, narration, and outro in {language}.
 Keep visual_description in English."""
 
-    prompt = f"""You are optimizing a kids' video script for YouTube Shorts (vertical, max 55 seconds).
+    # Get configurable shorts settings
+    target_scenes = config.get("shorts", {}).get("target_scenes", 3)
+    max_duration = config.get("shorts", {}).get("max_duration", 59)
+
+    prompt = f"""You are optimizing a kids' video script for YouTube Shorts (vertical, max {max_duration} seconds).
 
 ORIGINAL FULL SCRIPT:
 Title: {script_data["title"]}
@@ -321,8 +325,9 @@ Outro: {script_data["outro"]}
 YOUR TASK:
 1. Write a NEW, punchier intro_hook (max 10 words) that grabs attention in 2 seconds
    - Use a surprising question, bold claim, or "Did you know..." format
-2. Pick the 3 BEST scenes from the original (most visually interesting + engaging facts)
-3. Make each scene narration shorter (1-2 sentences max, punchy and fast-paced)
+2. Pick the {target_scenes} BEST scenes from the original (most visually interesting + engaging facts)
+3. Make each scene narration appropriate length (1-3 sentences)
+   - Target ~{max_duration // target_scenes} seconds per scene for total ~{max_duration}s
 4. Write a short outro (1 sentence, call to action)
 
 Respond in this exact JSON format:

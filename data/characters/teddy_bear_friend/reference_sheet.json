@@ -2,7 +2,7 @@
   "id": "teddy_bear_friend",
   "name": "Teddy",
   "description": "A warm chubby golden-brown teddy bear with a bright red bow tie, round button eyes, and a friendly smile",
-  "image_prompt_prefix": "A friendly golden-brown teddy bear with a red bow tie as the main character,",
+  "image_prompt_prefix": "with a friendly golden-brown teddy bear wearing a red bow tie in the scene",
   "content_types": ["story", "video"],
   "personality_note": "curious, warm, always asking questions"
 }
