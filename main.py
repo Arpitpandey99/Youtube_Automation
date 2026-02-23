@@ -915,7 +915,7 @@ if __name__ == "__main__":
         generate_music_library(config)
     elif "--cleanup-old" in args:
         days = 7
-        dry_run = "--dry-run" not in args
+        dry_run = "--dry-run" in args  # Fixed: dry_run=True when --dry-run flag is present
         if "--days" in args:
             idx = args.index("--days")
             days = int(args[idx + 1])
