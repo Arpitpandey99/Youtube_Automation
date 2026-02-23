@@ -85,10 +85,10 @@ def _cleanup(lang_dir: str, image_dir: str):
 
 
 def cleanup_old_output_dirs(days_old: int = 7, dry_run: bool = True):
-    """Remove intermediate files from old output directories.
+    """Remove media files and intermediate files from old output directories.
 
-    Keeps final outputs (videos, thumbnails, metadata, SRT) but removes
-    large intermediate files from runs older than the specified number of days.
+    KEEPS: script.json, metadata.json, run_log.json (logs & reference)
+    DELETES: videos, thumbnails, captions, intermediate files (after upload complete)
 
     Args:
         days_old: Only clean runs older than this many days
@@ -129,7 +129,25 @@ def cleanup_old_output_dirs(days_old: int = 7, dry_run: bool = True):
                         print(f"  Deleted: {target} ({size // 1024} KB)")
                     cleaned_bytes += size
 
+        # Clean media files: videos, thumbnails, captions (already uploaded to YouTube)
+        for root, dirs, files in os.walk(run_path):
+            for filename in files:
+                # Delete video files
+                if filename.endswith(".mp4") or \
+                   filename.endswith(".png") and "thumbnail" in filename.lower() or \
+                   filename.endswith(".srt"):
+                    target = os.path.join(root, filename)
+                    size = os.path.getsize(target)
+                    if dry_run:
+                        print(f"  Would delete: {target} ({size // 1024} KB)")
+                    else:
+                        os.remove(target)
+                        print(f"  Deleted: {target} ({size // 1024} KB)")
+                    cleaned_bytes += size
+
     print(f"\nTotal: {cleaned_bytes // (1024*1024)} MB {'would be' if dry_run else ''} freed")
+    if not dry_run:
+        print(f"✅ Kept: script.json, metadata.json, run_log.json in each run directory")
 
 
 # ── Video pipeline (2–3 min landscape) ───────────────────────────────────────
