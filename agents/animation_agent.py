@@ -326,6 +326,11 @@ def _animate_with_veo(config: dict, image_path: str,
     res = config.get("video", {}).get("resolution", [1280, 720])
     aspect_ratio = "9:16" if res[1] > res[0] else veo_config.get("aspect_ratio", "16:9")
 
+    # Set GCP credentials from config if GOOGLE_APPLICATION_CREDENTIALS not already set
+    creds_path = config.get("tts", {}).get("google_tts_credentials", "")
+    if creds_path and os.path.isfile(creds_path) and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_path
+
     # Initialize client with Vertex AI
     client = genai.Client(
         vertexai=True,

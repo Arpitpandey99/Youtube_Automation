@@ -704,7 +704,7 @@ def run_lullaby_pipeline(config: dict, upload: bool = True) -> dict:
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
-def start_scheduler(config: dict):
+def start_scheduler(config: dict, animate_shorts: bool = False):
     """Run video at 09:00 IST and shorts at 21:00 IST, every configured day."""
     upload_days = config["schedule"].get(
         "upload_days",
@@ -720,10 +720,17 @@ def start_scheduler(config: dict):
         "Sunday":    schedule.every().sunday,
     }
 
+    # Create separate config for shorts with AI animation enabled
+    import copy
+    shorts_config = copy.deepcopy(config)
+    if animate_shorts:
+        shorts_config["animation"]["provider"] = "ai_with_fallback"
+
+    anim_label = " (AI animated)" if animate_shorts else ""
     for day in upload_days:
         day_map[day].at("09:00").do(run_video_pipeline,  config=config)
-        day_map[day].at("21:00").do(run_shorts_pipeline, config=config)
-        print(f"  Scheduled: {day}  09:00 → video   21:00 → shorts")
+        day_map[day].at("21:00").do(run_shorts_pipeline, config=shorts_config)
+        print(f"  Scheduled: {day}  09:00 → video   21:00 → shorts{anim_label}")
 
     print("\nScheduler running. Press Ctrl+C to stop.\n")
     while True:
@@ -918,7 +925,9 @@ if __name__ == "__main__":
         print("  python main.py --poem --no-upload         # test poem, skip upload")
         print("  python main.py --lullaby --no-upload      # test lullaby, skip upload")
         print("  python main.py --video --animate          # use AI animation instead of Ken Burns")
+        print("  python main.py --shorts --animate         # AI animated Short")
         print("  python main.py --schedule                 # scheduler: video 9AM, shorts 9PM")
+        print("  python main.py --schedule --animate       # scheduler: video 9AM, AI animated shorts 9PM")
         print("  python main.py --generate-music           # download 10 kids music tracks")
         print("  python main.py --generate-lullaby-music   # download lullaby music tracks")
         print("  python main.py --cleanup-old [--days 7] [--dry-run]  # clean old intermediate files")
@@ -934,7 +943,7 @@ if __name__ == "__main__":
             days = int(args[idx + 1])
         cleanup_old_output_dirs(days_old=days, dry_run=dry_run)
     elif "--schedule" in args:
-        start_scheduler(config)
+        start_scheduler(config, animate_shorts="--animate" in args)
     elif "--lullaby" in args:
         run_lullaby_pipeline(config, upload=upload)
     elif "--poem" in args:
