@@ -1,10 +1,13 @@
 """Animation agent — converts static images into animated video clips.
 
-Two providers:
+Three provider modes:
   - "kenburns" (default, free): Pan/zoom effects via MoviePy
-  - "ai" (optional, paid): Replicate image-to-video models
+  - "ai" (paid): AI image-to-video (Veo 2, Kling 3.0, or Replicate)
+  - "ai_with_fallback": Try AI, fall back to Ken Burns on failure
 """
 
+import base64
+import copy
 import math
 import os
 import random
@@ -18,7 +21,10 @@ from PIL import Image, ImageFilter, ImageEnhance
 if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.LANCZOS
 
-from moviepy.editor import ImageClip, VideoClip, VideoFileClip, vfx
+from moviepy.editor import (
+    ImageClip, VideoClip, VideoFileClip,
+    concatenate_videoclips, CompositeVideoClip, vfx,
+)
 
 from agents.rate_limiter import get_limiter
 
@@ -200,25 +206,273 @@ def _animate_kenburns(config: dict, image_path: str, duration: float,
     return output_path
 
 
-# ── AI animation (Replicate) ────────────────────────────────────────
+# ── AI animation helpers ─────────────────────────────────────────────
+
+def _get_motion_prompt(scene_description: str) -> str:
+    """Build an animation-specific prompt from scene description."""
+    motion_hints = [
+        "gentle swaying motion, soft breeze effect",
+        "subtle floating particles, dreamy atmosphere",
+        "slow camera drift, peaceful movement",
+        "gentle character movement, soft animation",
+        "subtle environmental motion, leaves rustling",
+    ]
+    hint = random.choice(motion_hints)
+    return f"Gentle cartoon animation: {scene_description}. {hint}. " \
+           f"Smooth kid-friendly style, no sudden movements, no scary elements."
+
+
+def _extract_url(output) -> str:
+    """Extract video URL from various Replicate output formats."""
+    video_url = output
+    if isinstance(output, list):
+        video_url = output[0]
+    if hasattr(video_url, 'url'):
+        video_url = video_url.url
+    return str(video_url)
+
+
+def _extend_clip_to_duration(clip_path: str, target_duration: float,
+                             image_path: str, config: dict,
+                             output_path: str) -> str:
+    """Extend a short AI clip to match audio duration.
+
+    Strategy:
+      1. Slow the AI clip to speed_factor (default 0.5x) → doubles duration
+      2. If still shorter, append Ken Burns on the original image
+      3. Crossfade between AI portion and Ken Burns extension
+    """
+    ai_config = config.get("animation", {}).get("ai", {})
+    speed_factor = ai_config.get("speed_factor", 0.5)
+    extend_with_kb = ai_config.get("extend_with_kenburns", True)
+    fps = config["video"]["fps"]
+
+    clip = VideoFileClip(clip_path)
+    clip_dur = clip.duration
+
+    # Step 1: Slow down the AI clip
+    slowed = clip.fx(vfx.speedx, speed_factor)
+    slowed_dur = slowed.duration
+
+    if slowed_dur >= target_duration:
+        # AI clip (slowed) is long enough — just trim
+        final = slowed.subclip(0, target_duration)
+        final.write_videofile(output_path, fps=fps, codec="libx264",
+                              audio=False, threads=2, logger=None)
+        final.close()
+        slowed.close()
+        clip.close()
+        return output_path
+
+    if not extend_with_kb:
+        # Loop the slowed clip to fill duration
+        loops = math.ceil(target_duration / slowed_dur)
+        looped = slowed.fx(vfx.loop, n=loops).subclip(0, target_duration)
+        looped.write_videofile(output_path, fps=fps, codec="libx264",
+                               audio=False, threads=2, logger=None)
+        looped.close()
+        slowed.close()
+        clip.close()
+        return output_path
+
+    # Step 2: Create Ken Burns extension for remaining duration
+    remaining = target_duration - slowed_dur + 0.5  # 0.5s overlap for crossfade
+    kb_temp = output_path.replace(".mp4", "_kb_ext.mp4")
+    _animate_kenburns(config, image_path, remaining, kb_temp)
+    kb_clip = VideoFileClip(kb_temp)
+
+    # Step 3: Crossfade — fade out AI, fade in Ken Burns
+    crossfade_dur = min(0.5, slowed_dur * 0.3)
+    ai_part = slowed.set_start(0)
+    kb_part = kb_clip.set_start(slowed_dur - crossfade_dur)
+    kb_part = kb_part.crossfadein(crossfade_dur)
+
+    final = CompositeVideoClip([ai_part, kb_part],
+                               size=ai_part.size)
+    final = final.subclip(0, target_duration)
+    final.write_videofile(output_path, fps=fps, codec="libx264",
+                          audio=False, threads=2, logger=None)
+
+    final.close()
+    kb_clip.close()
+    slowed.close()
+    clip.close()
+
+    # Cleanup temp
+    if os.path.exists(kb_temp):
+        os.remove(kb_temp)
+
+    return output_path
+
+
+# ── AI Providers ──────────────────────────────────────────────────────
+
+def _animate_with_veo(config: dict, image_path: str,
+                      scene_description: str, output_path: str) -> str:
+    """Generate animated clip using Google Veo 2 via Vertex AI.
+
+    Uses GCP credits (₹26K free). Cost: ~$0.50/sec × 5 sec = $2.50/clip.
+    Retries up to 3 times with simplified prompts if Veo returns no output
+    (common when content safety filters reject the generation).
+    """
+    from google import genai
+    from google.genai import types
+
+    veo_config = config.get("animation", {}).get("ai", {}).get("veo", {})
+    project_id = veo_config.get("project_id")
+    location = veo_config.get("location", "us-central1")
+    model = veo_config.get("model", "veo-2.0-generate-001")
+    # Auto-detect aspect ratio from video resolution (landscape=16:9, portrait=9:16)
+    res = config.get("video", {}).get("resolution", [1280, 720])
+    aspect_ratio = "9:16" if res[1] > res[0] else veo_config.get("aspect_ratio", "16:9")
+
+    # Initialize client with Vertex AI
+    client = genai.Client(
+        vertexai=True,
+        project=project_id,
+        location=location,
+    )
+
+    # Read local image
+    image = types.Image.from_file(location=image_path)
+
+    # Retry with progressively simpler prompts (Veo rejects some prompts silently)
+    prompts = [
+        _get_motion_prompt(scene_description),
+        f"Gentle animation of a colorful kids illustration. Soft camera movement, peaceful scene.",
+        f"Slow subtle zoom on a cartoon illustration. Calm, smooth, kid-friendly.",
+    ]
+
+    for attempt, prompt in enumerate(prompts):
+        get_limiter("vertex_ai_video").acquire()
+        attempt_label = f" (attempt {attempt+1}/3)" if attempt > 0 else ""
+        print(f"    Veo 2: Generating clip{attempt_label} (polling, may take 1-3 min)...")
+
+        operation = client.models.generate_videos(
+            model=model,
+            prompt=prompt,
+            image=image,
+            config=types.GenerateVideosConfig(
+                aspect_ratio=aspect_ratio,
+                number_of_videos=1,
+            ),
+        )
+
+        # Poll until complete (Veo is async)
+        poll_count = 0
+        while not operation.done:
+            time.sleep(15)
+            operation = client.operations.get(operation)
+            poll_count += 1
+            if poll_count > 20:  # 5 min timeout
+                break
+
+        # Check if we got a result
+        if (operation.done and operation.response
+                and operation.result
+                and operation.result.generated_videos):
+            break
+        else:
+            if attempt < len(prompts) - 1:
+                print(f"    Veo 2: No output (likely content filter), retrying with simpler prompt...")
+            else:
+                raise RuntimeError("Veo 2 returned no video after 3 attempts (content filter)")
+
+    # Download video bytes
+    video = operation.result.generated_videos[0].video
+    if hasattr(video, 'video_bytes') and video.video_bytes:
+        with open(output_path, "wb") as f:
+            f.write(video.video_bytes)
+    elif hasattr(video, 'uri') and video.uri:
+        # Download from GCS URI
+        video_data = requests.get(video.uri, timeout=120).content
+        with open(output_path, "wb") as f:
+            f.write(video_data)
+    else:
+        raise RuntimeError("Veo 2 returned no downloadable video")
+
+    print(f"    Veo 2: Clip generated successfully")
+    return output_path
+
+
+def _animate_with_kling(config: dict, image_path: str,
+                        scene_description: str, output_path: str) -> str:
+    """Generate animated clip using Kling 3.0 via fal.ai API.
+
+    Cheapest option: ~$0.029/sec × 5 sec = $0.145/clip.
+    """
+    import fal_client
+
+    kling_config = config.get("animation", {}).get("ai", {}).get("kling", {})
+    api_key = kling_config.get("api_key")
+    model = kling_config.get("model", "fal-ai/kling-video/v3/pro/image-to-video")
+    duration = kling_config.get("duration", 5)
+
+    # fal.ai needs an image URL, not a local file — upload via data URI
+    with open(image_path, "rb") as f:
+        image_bytes = f.read()
+    img_b64 = base64.b64encode(image_bytes).decode()
+    mime = "image/png" if image_path.lower().endswith(".png") else "image/jpeg"
+    image_data_uri = f"data:{mime};base64,{img_b64}"
+
+    prompt = _get_motion_prompt(scene_description)
+
+    # Set API key
+    os.environ["FAL_KEY"] = api_key
+
+    get_limiter("fal_ai").acquire()
+    print(f"    Kling 3.0: Generating clip via fal.ai...")
+
+    for attempt in range(3):
+        try:
+            result = fal_client.subscribe(
+                model,
+                arguments={
+                    "prompt": prompt,
+                    "image_url": image_data_uri,
+                    "duration": str(duration),
+                    "aspect_ratio": "16:9",
+                },
+            )
+            break
+        except Exception as e:
+            if attempt < 2:
+                wait = 15 * (attempt + 1)
+                print(f"    Retry {attempt+1}/2 ({type(e).__name__}), waiting {wait}s...")
+                time.sleep(wait)
+            else:
+                raise
+
+    # Download generated video
+    video_url = result.get("video", {}).get("url")
+    if not video_url:
+        raise RuntimeError(f"Kling returned no video URL: {result}")
+
+    video_data = requests.get(video_url, timeout=120).content
+    with open(output_path, "wb") as f:
+        f.write(video_data)
+
+    print(f"    Kling 3.0: Clip generated successfully")
+    return output_path
+
 
 def _animate_with_replicate(config: dict, image_path: str,
-                            scene_description: str, duration: float,
-                            output_path: str) -> str:
-    """Animate an image using a Replicate image-to-video model."""
+                            scene_description: str, output_path: str) -> str:
+    """Generate animated clip using Replicate image-to-video model."""
     import replicate
 
     client = replicate.Client(api_token=config["replicate"]["api_token"])
     ai_config = config.get("animation", {}).get("ai", {})
-    model = ai_config.get("model", "wan-video/wan-2.5-i2v-fast")
-    clip_duration = ai_config.get("duration", 5)
-    clip_resolution = ai_config.get("resolution", "720p")
+    rep_config = ai_config.get("replicate", {})
+    model = rep_config.get("model", "wan-ai/wan2.1-i2v-480p")
+    clip_duration = rep_config.get("duration", 5)
+    clip_resolution = rep_config.get("resolution", "480p")
 
-    prompt = f"Gentle animation of: {scene_description}. Smooth subtle movement, kid-friendly cartoon style."
+    prompt = _get_motion_prompt(scene_description)
 
     for attempt in range(3):
         try:
-            get_limiter("replicate").acquire()
+            get_limiter("replicate_video").acquire()
             output = client.run(
                 model,
                 input={
@@ -237,31 +491,12 @@ def _animate_with_replicate(config: dict, image_path: str,
             else:
                 raise
 
-    # Download the video
-    video_url = output
-    if isinstance(output, list):
-        video_url = output[0]
-    if hasattr(video_url, 'url'):
-        video_url = video_url.url
-
-    video_data = requests.get(str(video_url), timeout=120).content
+    video_url = _extract_url(output)
+    video_data = requests.get(video_url, timeout=120).content
     with open(output_path, "wb") as f:
         f.write(video_data)
 
-    # If clip is shorter than needed, loop it
-    clip = VideoFileClip(output_path)
-    if clip.duration < duration:
-        loops = math.ceil(duration / clip.duration)
-        looped = clip.fx(vfx.loop, n=loops).subclip(0, duration)
-        temp_path = output_path.replace(".mp4", "_looped.mp4")
-        looped.write_videofile(temp_path, fps=clip.fps, codec="libx264",
-                               audio=False, threads=2, logger=None)
-        looped.close()
-        clip.close()
-        os.replace(temp_path, output_path)
-    else:
-        clip.close()
-
+    print(f"    Replicate: Clip generated successfully")
     return output_path
 
 
@@ -270,6 +505,9 @@ def _animate_with_replicate(config: dict, image_path: str,
 def animate_scene(config: dict, image_path: str, duration: float,
                   scene_description: str, output_path: str) -> str:
     """Animate a single scene image into a video clip.
+
+    For AI providers: generates a short clip (5s), then extends to full
+    duration using speed reduction + Ken Burns hybrid approach.
 
     Args:
         config: Full pipeline config
@@ -282,10 +520,35 @@ def animate_scene(config: dict, image_path: str, duration: float,
         Path to the animated video clip (.mp4)
     """
     provider = config.get("animation", {}).get("provider", "kenburns")
+    ai_provider = config.get("animation", {}).get("ai", {}).get("provider", "replicate")
+    fallback = config.get("animation", {}).get("ai", {}).get("fallback_to_kenburns", True)
 
-    if provider == "ai":
-        return _animate_with_replicate(config, image_path, scene_description,
-                                       duration, output_path)
+    if provider in ("ai", "ai_with_fallback"):
+        try:
+            # Generate short AI clip (5 seconds)
+            temp_clip = output_path.replace(".mp4", "_ai_raw.mp4")
+
+            if ai_provider == "veo":
+                _animate_with_veo(config, image_path, scene_description, temp_clip)
+            elif ai_provider == "kling":
+                _animate_with_kling(config, image_path, scene_description, temp_clip)
+            else:
+                _animate_with_replicate(config, image_path, scene_description, temp_clip)
+
+            # Extend to full duration using speed reduction + Ken Burns
+            _extend_clip_to_duration(temp_clip, duration, image_path, config, output_path)
+
+            # Cleanup raw AI clip
+            if os.path.exists(temp_clip):
+                os.remove(temp_clip)
+
+            return output_path
+
+        except Exception as e:
+            if provider == "ai_with_fallback" or fallback:
+                print(f"    AI animation failed ({e}), falling back to Ken Burns...")
+                return _animate_kenburns(config, image_path, duration, output_path)
+            raise
     else:
         return _animate_kenburns(config, image_path, duration, output_path)
 
@@ -294,12 +557,35 @@ def animate_all_scenes(config: dict, image_files: list, audio_files: list,
                        script_data: dict, output_dir: str) -> list:
     """Animate all scene images, matching each to its audio duration.
 
+    For AI providers, estimates cost upfront and auto-falls back to
+    Ken Burns if the projected cost exceeds the configured limit.
+
     Returns list of animated clip paths.
     """
     from moviepy.editor import AudioFileClip
 
     clips_dir = os.path.join(output_dir, "animated_clips")
     os.makedirs(clips_dir, exist_ok=True)
+
+    provider = config.get("animation", {}).get("provider", "kenburns")
+    ai_config = config.get("animation", {}).get("ai", {})
+
+    # Cost estimation for AI providers
+    if provider in ("ai", "ai_with_fallback"):
+        ai_provider = ai_config.get("provider", "replicate")
+        clip_dur = ai_config.get("clip_duration", 5)
+        cost_map = ai_config.get("cost_per_second", {})
+        cost_per_sec = cost_map.get(ai_provider, 0.04)
+        num_scenes = len(image_files)
+        est_cost = num_scenes * clip_dur * cost_per_sec
+        cost_limit = ai_config.get("cost_limit_per_video", 5.0)
+
+        print(f"  AI animation ({ai_provider}): ~${est_cost:.2f} for {num_scenes} scenes")
+
+        if est_cost > cost_limit:
+            print(f"  WARNING: Exceeds cost limit (${cost_limit:.2f}). Falling back to Ken Burns.")
+            config = copy.deepcopy(config)
+            config["animation"]["provider"] = "kenburns"
 
     animated_clips = []
     for i, (img_path, audio_path) in enumerate(zip(image_files, audio_files)):

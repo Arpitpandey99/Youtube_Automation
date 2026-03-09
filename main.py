@@ -199,8 +199,10 @@ def run_video_pipeline(config: dict, upload: bool = True) -> dict:
         audio_files = generate_voiceover_only(config, script_data, lang_dir, voice=voice)
         log_run(run_dir, "voiceover", "success", {"voice": voice})
 
-        # 5. Ken Burns animation
-        print("[5] Animating scenes (Ken Burns)...")
+        # 5. Animation (Ken Burns or AI video)
+        _anim_provider = config.get("animation", {}).get("provider", "kenburns")
+        _anim_label = "AI video" if _anim_provider.startswith("ai") else "Ken Burns"
+        print(f"[5] Animating scenes ({_anim_label})...")
         animated_clips = animate_all_scenes(
             config, image_files, audio_files, script_data, lang_dir
         )
@@ -344,8 +346,10 @@ def run_shorts_pipeline(config: dict, upload: bool = True) -> dict:
         shorts_audio = generate_voiceover_only(config, script_data, lang_dir, voice=voice)
         log_run(run_dir, "voiceover", "success", {"voice": voice})
 
-        # 6. Ken Burns animation (using base_script for scene-image mapping)
-        print("[6] Animating scenes (Ken Burns)...")
+        # 6. Animation (Ken Burns or AI video)
+        _anim_provider = config.get("animation", {}).get("provider", "kenburns")
+        _anim_label = "AI video" if _anim_provider.startswith("ai") else "Ken Burns"
+        print(f"[6] Animating scenes ({_anim_label})...")
         animated_clips = animate_all_scenes(
             config, image_files, shorts_audio, base_script, lang_dir
         )
@@ -478,8 +482,10 @@ def run_poem_pipeline(config: dict, upload: bool = True) -> dict:
         audio_files = generate_voiceover_only(config, script_data, lang_dir, voice=voice)
         log_run(run_dir, "voiceover", "success", {"voice": voice})
 
-        # 5. Ken Burns animation
-        print("[5] Animating scenes (Ken Burns)...")
+        # 5. Animation (Ken Burns or AI video)
+        _anim_provider = config.get("animation", {}).get("provider", "kenburns")
+        _anim_label = "AI video" if _anim_provider.startswith("ai") else "Ken Burns"
+        print(f"[5] Animating scenes ({_anim_label})...")
         animated_clips = animate_all_scenes(
             config, image_files, audio_files, script_data, lang_dir
         )
@@ -614,8 +620,10 @@ def run_lullaby_pipeline(config: dict, upload: bool = True) -> dict:
         audio_files = generate_lullaby_voiceover(config, script_data, lang_dir, voice=voice)
         log_run(run_dir, "voiceover", "success", {"voice": voice})
 
-        # 5. Ken Burns animation
-        print("[5] Animating scenes (Ken Burns)...")
+        # 5. Animation (Ken Burns or AI video)
+        _anim_provider = config.get("animation", {}).get("provider", "kenburns")
+        _anim_label = "AI video" if _anim_provider.startswith("ai") else "Ken Burns"
+        print(f"[5] Animating scenes ({_anim_label})...")
         animated_clips = animate_all_scenes(
             config, image_files, audio_files, script_data, lang_dir
         )
@@ -895,6 +903,10 @@ if __name__ == "__main__":
     args   = sys.argv[1:]
     upload = "--no-upload" not in args
 
+    # --animate flag: override animation provider to AI with Ken Burns fallback
+    if "--animate" in args:
+        config["animation"]["provider"] = "ai_with_fallback"
+
     if "--help" in args:
         print("Usage:")
         print("  python main.py --video                    # 2-3 min Hinglish video + upload")
@@ -905,6 +917,7 @@ if __name__ == "__main__":
         print("  python main.py --shorts --no-upload       # test shorts, skip upload")
         print("  python main.py --poem --no-upload         # test poem, skip upload")
         print("  python main.py --lullaby --no-upload      # test lullaby, skip upload")
+        print("  python main.py --video --animate          # use AI animation instead of Ken Burns")
         print("  python main.py --schedule                 # scheduler: video 9AM, shorts 9PM")
         print("  python main.py --generate-music           # download 10 kids music tracks")
         print("  python main.py --generate-lullaby-music   # download lullaby music tracks")

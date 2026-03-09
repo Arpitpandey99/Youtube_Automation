@@ -49,6 +49,7 @@ class RateLimiter:
 # Pre-configured limiters for each provider
 RATE_LIMITS = {
     "replicate": RateLimiter(5, "replicate"),       # 6/min actual, 5 with margin
+    "replicate_video": RateLimiter(3, "replicate_video"),  # slower for I2V models
     "openai": RateLimiter(20, "openai"),
     "openai_tts": RateLimiter(10, "openai_tts"),
     "youtube": RateLimiter(5, "youtube"),
@@ -56,6 +57,8 @@ RATE_LIMITS = {
     "elevenlabs": RateLimiter(3, "elevenlabs"),
     "huggingface": RateLimiter(5, "huggingface"),
     "pexels": RateLimiter(10, "pexels"),
+    "fal_ai": RateLimiter(5, "fal_ai"),             # fal.ai Kling video API
+    "vertex_ai_video": RateLimiter(3, "vertex_ai_video"),  # Google Veo 2
 }
 
 

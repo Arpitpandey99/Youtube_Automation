@@ -16,5 +16,9 @@ elevenlabs>=1.0.0
 # Google Cloud TTS — WaveNet/Neural2 voices, uses GCP credits (tts.provider=google, recommended)
 google-cloud-texttospeech>=2.0.0
 
+# AI video generation — animated cartoon clips from static images
+fal-client>=0.5.0              # fal.ai API for Kling 3.0 image-to-video
+google-genai>=1.0.0            # Google Gen AI SDK for Veo 2 image-to-video
+
 # Optional: Prefect orchestration (only if orchestration.engine=prefect)
 # prefect>=3.0.0
