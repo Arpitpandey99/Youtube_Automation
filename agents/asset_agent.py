@@ -38,6 +38,26 @@ def pick_voice(config: dict, lang_code: str) -> str:
     raise ValueError(f"No voices configured for language: {lang_code}")
 
 
+def _pick_google_voice(config: dict, voice_key: str = "google_tts_voice_story") -> str:
+    """Pick a Google TTS voice — rotates through pool if voice_rotation is enabled.
+
+    When voice_rotation.enabled is true, randomly picks from the voice pool
+    so each video gets a different narrator voice. Otherwise uses the single
+    configured voice.
+    """
+    tts_cfg = config.get("tts", {})
+    vr_cfg = config.get("voice_rotation", {})
+
+    if vr_cfg.get("enabled", False):
+        pool = vr_cfg.get("google_voice_pool", [])
+        if pool:
+            voice = random.choice(pool)
+            print(f"  Voice rotation: selected {voice}")
+            return voice
+
+    return tts_cfg.get(voice_key, "en-IN-Neural2-D")
+
+
 def _build_scene_texts(script_data: dict) -> list[str]:
     """Build narration texts for each scene, combining intro/outro."""
     texts = []
@@ -123,6 +143,10 @@ def _generate_voiceover_elevenlabs(config: dict, texts: list[str],
     Uses eleven_multilingual_v2 (or eleven_v3 if configured) which auto-detects
     Hindi words in Hinglish text and pronounces them with native Hindi phonemes —
     no SSML markup needed. VoiceSettings tuned for warm, human, expressive feel.
+
+    Supports voice cloning: if elevenlabs_voice_clone_id is set and
+    elevenlabs_use_clone is true, uses the cloned voice instead of the
+    pre-made voice. Requires ElevenLabs Starter plan ($5/mo) or higher.
     """
     try:
         from elevenlabs.client import ElevenLabs
@@ -135,8 +159,15 @@ def _generate_voiceover_elevenlabs(config: dict, texts: list[str],
 
     tts_cfg  = config.get("tts", {})
     api_key  = tts_cfg.get("elevenlabs_api_key", "")
-    voice_id = tts_cfg.get("elevenlabs_voice_id", "")
     model    = tts_cfg.get("elevenlabs_model", "eleven_multilingual_v2")
+
+    # Voice clone support: use clone voice if configured, else pre-made voice
+    use_clone = tts_cfg.get("elevenlabs_use_clone", False)
+    if use_clone and tts_cfg.get("elevenlabs_voice_clone_id"):
+        voice_id = tts_cfg["elevenlabs_voice_clone_id"]
+        print(f"  Using ElevenLabs cloned voice: {voice_id}")
+    else:
+        voice_id = tts_cfg.get("elevenlabs_voice_id", "")
 
     if not api_key:
         raise ValueError("tts.elevenlabs_api_key is not set in config.yaml")
@@ -191,6 +222,7 @@ def _generate_voiceover_elevenlabs_lullaby(config: dict, texts: list[str],
     """ElevenLabs voiceover with calmer settings for lullaby/bedtime content.
 
     Lower style (0.10) + higher stability (0.65) = consistent, soothing delivery.
+    Supports voice cloning (same as regular ElevenLabs variant).
     """
     try:
         from elevenlabs.client import ElevenLabs
@@ -200,8 +232,13 @@ def _generate_voiceover_elevenlabs_lullaby(config: dict, texts: list[str],
 
     tts_cfg  = config.get("tts", {})
     api_key  = tts_cfg.get("elevenlabs_api_key", "")
-    voice_id = tts_cfg.get("elevenlabs_voice_id", "")
     model    = tts_cfg.get("elevenlabs_model", "eleven_multilingual_v2")
+
+    use_clone = tts_cfg.get("elevenlabs_use_clone", False)
+    if use_clone and tts_cfg.get("elevenlabs_voice_clone_id"):
+        voice_id = tts_cfg["elevenlabs_voice_clone_id"]
+    else:
+        voice_id = tts_cfg.get("elevenlabs_voice_id", "")
 
     client = ElevenLabs(api_key=api_key)
     audio_files = []
@@ -292,6 +329,7 @@ def _generate_voiceover_google_tts(config: dict, texts: list[str],
 
     Neural2 en-IN voices handle Indian-accented Hinglish natively.
     Supports full SSML: <prosody>, <break>, <emphasis> — unlike edge-tts.
+    When voice_rotation is enabled, picks from a pool of voices per video.
 
     Auth: set tts.google_tts_credentials in config.yaml (path to service account JSON)
     or set GOOGLE_APPLICATION_CREDENTIALS env var for ADC.
@@ -306,7 +344,7 @@ def _generate_voiceover_google_tts(config: dict, texts: list[str],
 
     tts_cfg = config.get("tts", {})
     creds_path = tts_cfg.get("google_tts_credentials", "")
-    voice_name = tts_cfg.get(voice_key, "en-IN-Neural2-D")
+    voice_name = _pick_google_voice(config, voice_key)
 
     if creds_path:
         client = texttospeech.TextToSpeechClient.from_service_account_json(creds_path)

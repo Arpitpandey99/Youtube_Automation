@@ -16,11 +16,72 @@ from moviepy.editor import (
 TRANSITION_DURATION = 0.6  # seconds of crossfade between scenes
 LULLABY_TRANSITION = 1.0  # gentler crossfade for lullaby videos
 
+# ── Format Variation ─────────────────────────────────────────────────
+# Randomizes visual parameters per video so each one looks different
+# to YouTube's content similarity detection.
+
+_SUBTITLE_COLOR_POOL = [
+    "yellow", "white", "#00FFFF", "#FFD700", "#98FB98", "#FFA07A",
+]
+
+_SUBTITLE_FONT_POOL = [
+    "Arial-Bold", "Helvetica-Bold", "Impact", "Verdana-Bold",
+]
+
+
+def _get_format_variation(config: dict) -> dict:
+    """Generate randomized format parameters for this video.
+
+    Returns a dict of visual params that differ from video to video,
+    making each upload look distinct to YouTube's AI slop detector.
+    Controlled by config → format_variation.enabled (default: true).
+    """
+    fv_cfg = config.get("format_variation", {})
+    if not fv_cfg.get("enabled", True):
+        # Return defaults when disabled
+        return {
+            "transition_duration": TRANSITION_DURATION,
+            "subtitle_font_size": config["video"]["subtitle_font_size"],
+            "subtitle_color": config["video"]["subtitle_color"],
+            "subtitle_font": "Arial-Bold",
+            "subtitle_stroke_width": 2,
+            "subtitle_y_offset": 180,
+            "shorts_subtitle_font_size": 52,
+            "shorts_subtitle_y_offset": 350,
+            "kenburns_zoom_ratio": config.get("animation", {}).get("kenburns", {}).get("zoom_ratio", 0.04),
+        }
+
+    # Randomize within safe ranges
+    return {
+        "transition_duration": round(random.uniform(0.3, 0.8), 2),
+        "subtitle_font_size": random.choice([42, 44, 46, 48, 50, 52, 54]),
+        "subtitle_color": random.choice(_SUBTITLE_COLOR_POOL),
+        "subtitle_font": random.choice(_SUBTITLE_FONT_POOL),
+        "subtitle_stroke_width": random.choice([2, 3]),
+        "subtitle_y_offset": random.randint(140, 200),
+        "shorts_subtitle_font_size": random.choice([48, 50, 52, 54, 56]),
+        "shorts_subtitle_y_offset": random.randint(300, 400),
+        "kenburns_zoom_ratio": round(random.uniform(0.025, 0.06), 3),
+    }
+
+
+def _log_format_variation(fmt: dict):
+    """Print the randomized format params for this video run."""
+    print(f"  Format variation: transition={fmt['transition_duration']}s, "
+          f"font={fmt['subtitle_font']}, color={fmt['subtitle_color']}, "
+          f"size={fmt['subtitle_font_size']}, zoom={fmt.get('kenburns_zoom_ratio', 'N/A')}")
+
 
 def create_scene_clip(image_path: str, audio_path: str, narration_text: str,
-                      config: dict) -> CompositeVideoClip:
-    """Create a single scene clip with image, audio, and subtitles."""
+                      config: dict, fmt: dict = None) -> CompositeVideoClip:
+    """Create a single scene clip with image, audio, and subtitles.
+
+    Args:
+        fmt: format variation dict from _get_format_variation(). If None, uses defaults.
+    """
     resolution = tuple(config["video"]["resolution"])
+    if fmt is None:
+        fmt = _get_format_variation(config)
 
     # Load audio to get duration
     audio = AudioFileClip(audio_path)
@@ -46,16 +107,16 @@ def create_scene_clip(image_path: str, audio_path: str, narration_text: str,
         txt_clip = (
             TextClip(
                 subtitle_text,
-                fontsize=config["video"]["subtitle_font_size"],
-                color=config["video"]["subtitle_color"],
-                font="Arial-Bold",
+                fontsize=fmt["subtitle_font_size"],
+                color=fmt["subtitle_color"],
+                font=fmt["subtitle_font"],
                 stroke_color="black",
-                stroke_width=2,
+                stroke_width=fmt["subtitle_stroke_width"],
                 method="caption",
                 size=(resolution[0] - 200, None),
             )
             .set_duration(duration)
-            .set_position(("center", resolution[1] - 180))
+            .set_position(("center", resolution[1] - fmt["subtitle_y_offset"]))
         )
         video = CompositeVideoClip([img_clip, txt_clip], size=resolution)
     except Exception:
@@ -70,7 +131,10 @@ def create_scene_clip(image_path: str, audio_path: str, narration_text: str,
 def assemble_video(config: dict, script_data: dict, assets: dict, output_dir: str) -> str:
     """Assemble the final video from all scenes."""
     resolution = tuple(config["video"]["resolution"])
+    fmt = _get_format_variation(config)
     scene_clips = []
+
+    _log_format_variation(fmt)
 
     for i in range(len(script_data["scenes"])):
         image_path = assets["image_files"][i]
@@ -83,11 +147,11 @@ def assemble_video(config: dict, script_data: dict, assets: dict, output_dir: st
             narration = narration + " " + script_data["outro"]
 
         print(f"  Assembling scene {i+1}...")
-        clip = create_scene_clip(image_path, audio_path, narration, config)
+        clip = create_scene_clip(image_path, audio_path, narration, config, fmt=fmt)
         scene_clips.append(clip)
 
     # Apply crossfade transitions between scenes
-    t = TRANSITION_DURATION
+    t = fmt["transition_duration"]
     for i in range(len(scene_clips)):
         if i > 0:
             scene_clips[i] = scene_clips[i].crossfadein(t)
@@ -162,9 +226,11 @@ def _prepare_vertical_image(image_path: str, target_w: int = 1080, target_h: int
 
 
 def create_shorts_clip(image_path: str, audio_path: str, narration_text: str,
-                       config: dict) -> CompositeVideoClip:
+                       config: dict, fmt: dict = None) -> CompositeVideoClip:
     """Create a single scene clip in vertical (9:16) format for Shorts."""
     shorts_res = (1080, 1920)
+    if fmt is None:
+        fmt = _get_format_variation(config)
 
     audio = AudioFileClip(audio_path)
     duration = audio.duration + 0.3
@@ -190,16 +256,16 @@ def create_shorts_clip(image_path: str, audio_path: str, narration_text: str,
         txt_clip = (
             TextClip(
                 subtitle_text,
-                fontsize=52,
-                color="white",
-                font="Arial-Bold",
+                fontsize=fmt["shorts_subtitle_font_size"],
+                color=fmt["subtitle_color"],
+                font=fmt["subtitle_font"],
                 stroke_color="black",
                 stroke_width=3,
                 method="caption",
                 size=(shorts_res[0] - 100, None),
             )
             .set_duration(duration)
-            .set_position(("center", shorts_res[1] - 350))
+            .set_position(("center", shorts_res[1] - fmt["shorts_subtitle_y_offset"]))
         )
         video = CompositeVideoClip([img_clip, txt_clip], size=shorts_res)
     except Exception:
@@ -216,6 +282,7 @@ def assemble_shorts(config: dict, script_data: dict, assets: dict, output_dir: s
     If shorts_script and shorts_audio_files are provided, uses the re-hooked
     shorts-specific script. Otherwise falls back to truncating the full video scenes.
     """
+    fmt = _get_format_variation(config)
     scene_clips = []
     total_duration = 0.0
     max_duration = config.get("shorts", {}).get("max_duration", 59.0)
@@ -249,7 +316,7 @@ def assemble_shorts(config: dict, script_data: dict, assets: dict, output_dir: s
             narration = use_script["intro_hook"] + " " + narration
 
         print(f"  Shorts: assembling scene {i+1}...")
-        clip = create_shorts_clip(image_path, audio_path, narration, config)
+        clip = create_shorts_clip(image_path, audio_path, narration, config, fmt=fmt)
         scene_clips.append(clip)
         total_duration += scene_dur
 
@@ -257,7 +324,7 @@ def assemble_shorts(config: dict, script_data: dict, assets: dict, output_dir: s
         raise Exception("No scenes fit within 60 seconds for Shorts")
 
     # Apply crossfade transitions (shorter for shorts)
-    t = TRANSITION_DURATION * 0.6  # ~0.36s for fast-paced shorts
+    t = fmt["transition_duration"] * 0.6
     for i in range(len(scene_clips)):
         if i > 0:
             scene_clips[i] = scene_clips[i].crossfadein(t)
@@ -302,12 +369,22 @@ def assemble_shorts(config: dict, script_data: dict, assets: dict, output_dir: s
 # ── Animated video assembly ──────────────────────────────────────────
 
 def _add_subtitles_to_clip(clip, narration_text: str, config: dict,
-                           resolution: tuple, vertical: bool = False):
+                           resolution: tuple, vertical: bool = False,
+                           fmt: dict = None):
     """Add subtitle overlay to a video clip. Returns CompositeVideoClip."""
     max_chars = 25 if vertical else 50
-    font_size = 52 if vertical else config["video"]["subtitle_font_size"]
-    color = "white" if vertical else config["video"]["subtitle_color"]
-    y_pos = resolution[1] - 350 if vertical else resolution[1] - 180
+    if fmt:
+        font_size = fmt["shorts_subtitle_font_size"] if vertical else fmt["subtitle_font_size"]
+        color = fmt["subtitle_color"]
+        font = fmt["subtitle_font"]
+        stroke_w = fmt["subtitle_stroke_width"] if not vertical else 3
+        y_pos = (resolution[1] - fmt["shorts_subtitle_y_offset"]) if vertical else (resolution[1] - fmt["subtitle_y_offset"])
+    else:
+        font_size = 52 if vertical else config["video"]["subtitle_font_size"]
+        color = "white" if vertical else config["video"]["subtitle_color"]
+        font = "Arial-Bold"
+        stroke_w = 2 if not vertical else 3
+        y_pos = resolution[1] - 350 if vertical else resolution[1] - 180
 
     words = narration_text.split()
     lines = []
@@ -327,9 +404,9 @@ def _add_subtitles_to_clip(clip, narration_text: str, config: dict,
                 subtitle_text,
                 fontsize=font_size,
                 color=color,
-                font="Arial-Bold",
+                font=font,
                 stroke_color="black",
-                stroke_width=2 if not vertical else 3,
+                stroke_width=stroke_w,
                 method="caption",
                 size=(resolution[0] - (100 if vertical else 200), None),
             )
@@ -392,7 +469,10 @@ def assemble_animated_video(config: dict, script_data: dict,
                             output_dir: str) -> str:
     """Assemble final video from pre-animated clips + audio files."""
     resolution = tuple(config["video"]["resolution"])
+    fmt = _get_format_variation(config)
     scene_clips = []
+
+    _log_format_variation(fmt)
 
     for i in range(len(script_data["scenes"])):
         if i >= len(animated_clips) or i >= len(audio_files):
@@ -421,12 +501,12 @@ def assemble_animated_video(config: dict, script_data: dict,
         video_clip = video_clip.subclip(0, target_dur)
 
         # Add subtitles
-        video_clip = _add_subtitles_to_clip(video_clip, narration, config, resolution)
+        video_clip = _add_subtitles_to_clip(video_clip, narration, config, resolution, fmt=fmt)
         video_clip = video_clip.set_audio(audio)
         scene_clips.append(video_clip)
 
     # Apply crossfade transitions
-    t = TRANSITION_DURATION
+    t = fmt["transition_duration"]
     for i in range(len(scene_clips)):
         if i > 0:
             scene_clips[i] = scene_clips[i].crossfadein(t)
@@ -486,6 +566,7 @@ def assemble_animated_shorts(config: dict, script_data: dict,
                              shorts_audio: list = None) -> str:
     """Assemble animated Shorts video (vertical, <=60s)."""
     shorts_res = (1080, 1920)
+    fmt = _get_format_variation(config)
     scene_clips = []
     total_duration = 0.0
     max_duration = config.get("shorts", {}).get("max_duration", 59.0)
@@ -535,7 +616,7 @@ def assemble_animated_shorts(config: dict, script_data: dict,
 
         # Add subtitles
         video_clip = _add_subtitles_to_clip(video_clip, narration, config,
-                                            shorts_res, vertical=True)
+                                            shorts_res, vertical=True, fmt=fmt)
         video_clip = video_clip.set_audio(audio)
         scene_clips.append(video_clip)
         total_duration += scene_dur
@@ -543,7 +624,7 @@ def assemble_animated_shorts(config: dict, script_data: dict,
     if not scene_clips:
         raise Exception("No animated scenes fit within 60 seconds for Shorts")
 
-    t = TRANSITION_DURATION * 0.6
+    t = fmt["transition_duration"] * 0.6
     for i in range(len(scene_clips)):
         if i > 0:
             scene_clips[i] = scene_clips[i].crossfadein(t)
@@ -606,7 +687,10 @@ def assemble_poem_video(config: dict, script_data: dict,
     New function — does not touch assemble_animated_video().
     """
     resolution = tuple(config["video"]["resolution"])
+    fmt = _get_format_variation(config)
     scene_clips = []
+
+    _log_format_variation(fmt)
 
     for i, scene in enumerate(script_data["scenes"]):
         if i >= len(animated_clips) or i >= len(audio_files):
@@ -633,7 +717,7 @@ def assemble_poem_video(config: dict, script_data: dict,
         video_clip = video_clip.subclip(0, target_dur)
 
         # Bottom subtitle (narration)
-        video_clip = _add_subtitles_to_clip(video_clip, narration, config, resolution)
+        video_clip = _add_subtitles_to_clip(video_clip, narration, config, resolution, fmt=fmt)
 
         # Top read-along poem lines overlay
         poem_lines = scene.get("lines", [])
@@ -644,7 +728,7 @@ def assemble_poem_video(config: dict, script_data: dict,
         video_clip = video_clip.set_audio(audio)
         scene_clips.append(video_clip)
 
-    t = TRANSITION_DURATION
+    t = fmt["transition_duration"]
     for i in range(len(scene_clips)):
         if i > 0:
             scene_clips[i] = scene_clips[i].crossfadein(t)
@@ -676,6 +760,7 @@ def assemble_lullaby_video(config: dict, script_data: dict,
     New function — does not touch assemble_animated_video().
     """
     resolution = tuple(config["video"]["resolution"])
+    fmt = _get_format_variation(config)
     scene_clips = []
 
     for i, scene in enumerate(script_data["scenes"]):
@@ -702,7 +787,7 @@ def assemble_lullaby_video(config: dict, script_data: dict,
             video_clip = video_clip.fx(vfx.loop, n=loops)
         video_clip = video_clip.subclip(0, target_dur)
 
-        video_clip = _add_subtitles_to_clip(video_clip, narration, config, resolution)
+        video_clip = _add_subtitles_to_clip(video_clip, narration, config, resolution, fmt=fmt)
         video_clip = video_clip.set_audio(audio)
         scene_clips.append(video_clip)
 
