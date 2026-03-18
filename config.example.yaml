@@ -91,11 +91,14 @@ content:
   use_characters: true
   character: "teddy_bear_friend"
 
-# Scheduler
+# Scheduler + upload time optimization
 schedule:
   videos_per_week: 14
   upload_days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
   upload_time: "21:00"  # 9 PM — ensure server timezone is set to Asia/Kolkata (IST)
+  optimize_time: true               # auto-adjust upload time based on performance data
+  time_slots_to_test: [15, 18, 20, 21]  # hours (IST) to rotate through for testing
+  min_data_for_optimization: 20     # minimum uploads before auto-optimizing
 
 # Video settings
 video:
@@ -118,11 +121,13 @@ ab_testing:
   variants_count: 3
   min_data_points: 10
 
-# Analytics feedback loop (optional - learn from past video performance)
+# Analytics feedback loop — learns from past video performance to optimize future content
 analytics:
-  enabled: false
+  enabled: true
   youtube_analytics: true
   fetch_delay_hours: 48
+  detailed_metrics: true          # use YouTube Analytics API for CTR/impressions (requires re-auth)
+  category_weight_min_videos: 5   # min videos per category before weighting kicks in
 
 # Playlist automation (optional - auto-organize videos into playlists)
 playlists:
@@ -166,8 +171,8 @@ voice_rotation:
   google_voice_pool:
     - "en-IN-Neural2-A"   # clear female — good for educational
     - "en-IN-Neural2-D"   # warm female — good for stories
-    - "en-IN-Neural2-F"   # soft female — gentle delivery
-    - "en-IN-Neural2-E"   # expressive female — engaging tone
+    - "en-IN-Wavenet-A"   # clear female wavenet — gentle delivery
+    - "en-IN-Wavenet-D"   # warm female wavenet — engaging tone
 
 # Format variation — randomize visual parameters per video ($0 extra cost)
 # Prevents YouTube from detecting "same template" pattern across uploads.
@@ -175,6 +180,48 @@ voice_rotation:
 # Ken Burns zoom ratios. Enabled by default.
 format_variation:
   enabled: true
+
+# --- v2: Growth Intelligence Modules ---
+
+# Trend Intelligence — discovers trending kids educational topics
+# Sources: YouTube trending search, YouTube autocomplete, competitor channel analysis
+trends:
+  enabled: true
+  refresh_interval_hours: 24        # how often to refresh trend data
+  competitor_channels: []           # add YouTube channel IDs to track (e.g., "UCxxxxxxx")
+  niche_keywords:                   # search queries for trend discovery
+    - "kids fun facts"
+    - "kids science experiments"
+    - "children educational"
+    - "bachche ke liye facts"
+    - "amazing facts for kids"
+  trend_weight_in_topic_gen: 0.4    # 40% chance of using a trend topic vs random
+
+# Topic Clustering — groups topics into thematic clusters for topical authority
+clusters:
+  enabled: true
+  min_cluster_size: 3
+  max_clusters: 15
+  refresh_interval_days: 7
+  use_cluster_topics: true          # pick topics from clusters instead of random
+
+# Series Generator — transforms clusters into episodic content series
+# Kids audiences prefer repeated characters and formats
+series:
+  enabled: true
+  max_active_series: 3              # max concurrent series
+  episodes_per_series: 15           # episodes per series plan
+  series_topic_priority: 0.6        # 60% chance of picking a series topic over standalone
+
+# Thumbnail A/B Testing — generates multiple thumbnail variants per video
+# Auto-replaces underperforming thumbnails based on CTR data
+thumbnail_ab:
+  enabled: true
+  variants_count: 3                 # number of thumbnail variants to generate
+  auto_replace: true                # automatically replace underperforming thumbnails
+  min_hours_before_replace: 72      # wait 72h before evaluating
+  min_impressions_before_replace: 100
+  replace_if_ctr_below_pct: 0.8    # replace if CTR is below 80% of channel average
 
 # Orchestration engine
 orchestration:
