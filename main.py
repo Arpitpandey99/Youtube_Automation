@@ -75,13 +75,25 @@ def _prepare_config(config: dict) -> dict:
 
 
 def _cleanup(lang_dir: str, image_dir: str):
-    """Remove large intermediate files after video assembly."""
+    """Remove large intermediate files after video assembly.
+    Preserves thumbnail_variant_*.png files for A/B testing.
+    """
     for folder in ["audio", "animated_clips"]:
         p = os.path.join(lang_dir, folder)
         if os.path.exists(p):
             shutil.rmtree(p)
     if os.path.exists(image_dir):
+        # Preserve thumbnail variants before deleting image_dir
+        preserved = []
+        for f in os.listdir(image_dir):
+            if f.startswith("thumbnail_variant_"):
+                src = os.path.join(image_dir, f)
+                dst = os.path.join(lang_dir, f)
+                shutil.copy2(src, dst)
+                preserved.append(f)
         shutil.rmtree(image_dir)
+        if preserved:
+            print(f"  Preserved {len(preserved)} thumbnail variants for A/B testing")
 
 
 def cleanup_old_output_dirs(days_old: int = 7, dry_run: bool = True):
@@ -148,6 +160,59 @@ def cleanup_old_output_dirs(days_old: int = 7, dry_run: bool = True):
     print(f"\nTotal: {cleaned_bytes // (1024*1024)} MB {'would be' if dry_run else ''} freed")
     if not dry_run:
         print(f"✅ Kept: script.json, metadata.json, run_log.json in each run directory")
+
+
+# ── v2: Post-upload helper hooks ──────────────────────────────────────────────
+
+def _generate_thumbnail_variants(config: dict, metadata: dict, image_files: list,
+                                  output_dir: str, content_type: str):
+    """Generate thumbnail A/B variants if enabled."""
+    if not config.get("thumbnail_ab", {}).get("enabled", False):
+        return
+    try:
+        from services.thumbnail_ab_service import generate_thumbnail_variants
+        count = config.get("thumbnail_ab", {}).get("variants_count", 3)
+        variants = generate_thumbnail_variants(
+            config, metadata, image_files, output_dir, content_type, count=count
+        )
+        if variants:
+            print(f"  Generated {len(variants)} thumbnail variants for A/B testing")
+    except Exception as e:
+        print(f"  Warning: Thumbnail variant generation failed: {e}")
+
+
+def _post_upload_hooks(config: dict, video_db_id: int, topic_data: dict,
+                       primary_thumb: str, output_dir: str):
+    """Run v2 post-upload hooks: upload time recording, thumbnail storage, series marking."""
+    if not video_db_id:
+        return
+
+    # Record upload time for schedule optimization
+    try:
+        from services.schedule_optimizer_service import record_upload_time
+        record_upload_time(video_db_id)
+    except Exception:
+        pass
+
+    # Store thumbnail variants in DB
+    try:
+        from services.thumbnail_ab_service import store_thumbnail_variants
+        import glob as _glob
+        variant_files = sorted(_glob.glob(os.path.join(output_dir, "thumbnail_variant_*.png")))
+        if variant_files:
+            variants = [{"path": p, "variant_index": i, "description": f"Variant {i}"}
+                        for i, p in enumerate(variant_files)]
+            store_thumbnail_variants(video_db_id, variants, primary_path=primary_thumb)
+    except Exception:
+        pass
+
+    # Mark series episode as produced
+    if topic_data.get("episode_id"):
+        try:
+            from services.series_service import mark_episode_produced
+            mark_episode_produced(topic_data["episode_id"], video_db_id)
+        except Exception:
+            pass
 
 
 # ── Video pipeline (2–3 min landscape) ───────────────────────────────────────
@@ -229,7 +294,11 @@ def run_video_pipeline(config: dict, upload: bool = True) -> dict:
         with open(os.path.join(lang_dir, "metadata.json"), "w") as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
 
+        # 8b. Generate thumbnail variants for A/B testing
+        _generate_thumbnail_variants(config, metadata, image_files, lang_dir, "video")
+
         # 9. Upload
+        video_db_id = None
         if upload:
             try:
                 print("[9] Uploading to YouTube...")
@@ -239,11 +308,13 @@ def run_video_pipeline(config: dict, upload: bool = True) -> dict:
                 print(f"  Live: {video_url}")
                 if video_id and srt_path:
                     upload_captions(config, video_id, srt_path, language=LANG_CODE)
-                insert_video(
+                video_db_id = insert_video(
                     video_id=video_id, platform="youtube", language=LANG_CODE,
                     topic=topic_data["topic"], category=topic_data["category"],
                     title=metadata["title"], run_dir=run_dir,
                 )
+                # v2: Post-upload hooks
+                _post_upload_hooks(config, video_db_id, topic_data, yt_thumb, lang_dir)
             except Exception as e:
                 print(f"  Upload failed: {e}")
                 log_run(run_dir, "upload", "failed", {"error": str(e)})
@@ -374,6 +445,9 @@ def run_shorts_pipeline(config: dict, upload: bool = True) -> dict:
         with open(os.path.join(lang_dir, "metadata.json"), "w") as f:
             json.dump(shorts_metadata, f, indent=2, ensure_ascii=False)
 
+        # 8b. Generate thumbnail variants for A/B testing
+        _generate_thumbnail_variants(config, metadata, image_files, lang_dir, "shorts")
+
         # 9. Upload
         if upload:
             try:
@@ -384,11 +458,12 @@ def run_shorts_pipeline(config: dict, upload: bool = True) -> dict:
                 result["shorts_url"] = shorts_url
                 log_run(run_dir, "upload", "success", {"url": shorts_url})
                 print(f"  Live: {shorts_url}")
-                insert_video(
+                video_db_id = insert_video(
                     video_id=shorts_vid, platform="youtube", language=LANG_CODE,
                     topic=topic_data["topic"], category=topic_data["category"],
                     title=shorts_metadata["title"], run_dir=run_dir,
                 )
+                _post_upload_hooks(config, video_db_id, topic_data, thumb, lang_dir)
             except Exception as e:
                 print(f"  Upload failed: {e}")
                 log_run(run_dir, "upload", "failed", {"error": str(e)})
@@ -508,6 +583,9 @@ def run_poem_pipeline(config: dict, upload: bool = True) -> dict:
         with open(os.path.join(lang_dir, "metadata.json"), "w") as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
 
+        # 7b. Generate thumbnail variants for A/B testing
+        _generate_thumbnail_variants(config, metadata, image_files, lang_dir, "poem")
+
         # 8. Upload
         if upload:
             try:
@@ -516,11 +594,12 @@ def run_poem_pipeline(config: dict, upload: bool = True) -> dict:
                 result["video_url"] = video_url
                 log_run(run_dir, "upload", "success", {"url": video_url})
                 print(f"  Live: {video_url}")
-                insert_video(
+                video_db_id = insert_video(
                     video_id=video_id, platform="youtube", language=LANG_CODE,
                     topic=topic_data["topic"], category=topic_data["category"],
                     title=metadata["title"], run_dir=run_dir,
                 )
+                _post_upload_hooks(config, video_db_id, topic_data, yt_thumb, lang_dir)
             except Exception as e:
                 print(f"  Upload failed: {e}")
                 log_run(run_dir, "upload", "failed", {"error": str(e)})
@@ -646,6 +725,9 @@ def run_lullaby_pipeline(config: dict, upload: bool = True) -> dict:
         with open(os.path.join(lang_dir, "metadata.json"), "w") as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
 
+        # 7b. Generate thumbnail variants for A/B testing
+        _generate_thumbnail_variants(config, metadata, image_files, lang_dir, "lullaby")
+
         # 8. Upload
         if upload:
             try:
@@ -654,11 +736,12 @@ def run_lullaby_pipeline(config: dict, upload: bool = True) -> dict:
                 result["video_url"] = video_url
                 log_run(run_dir, "upload", "success", {"url": video_url})
                 print(f"  Live: {video_url}")
-                insert_video(
+                video_db_id = insert_video(
                     video_id=video_id, platform="youtube", language=LANG_CODE,
                     topic=topic_data["topic"], category=topic_data["category"],
                     title=metadata["title"], run_dir=run_dir,
                 )
+                _post_upload_hooks(config, video_db_id, topic_data, yt_thumb, lang_dir)
             except Exception as e:
                 print(f"  Upload failed: {e}")
                 log_run(run_dir, "upload", "failed", {"error": str(e)})
@@ -705,7 +788,11 @@ def run_lullaby_pipeline(config: dict, upload: bool = True) -> dict:
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
 def start_scheduler(config: dict, animate_shorts: bool = False):
-    """Run video at 09:00 IST and shorts at 21:00 IST, every configured day."""
+    """Run video at 09:00 IST and shorts at 21:00 IST, every configured day.
+
+    If schedule.optimize_time is enabled and enough data exists,
+    uses the optimal upload time instead of hardcoded times.
+    """
     upload_days = config["schedule"].get(
         "upload_days",
         ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
@@ -720,22 +807,55 @@ def start_scheduler(config: dict, animate_shorts: bool = False):
         "Sunday":    schedule.every().sunday,
     }
 
+    # v2: Check for optimal upload time
+    video_time = "09:00"
+    shorts_time = "21:00"
+    if config.get("schedule", {}).get("optimize_time", False):
+        try:
+            from services.schedule_optimizer_service import get_optimal_upload_time
+            optimal = get_optimal_upload_time(config)
+            if optimal.get("best_hour") is not None and optimal.get("confidence", 0) > 0.5:
+                best_hour = optimal["best_hour"]
+                video_time = f"{best_hour:02d}:00"
+                # Shorts 12 hours offset from video
+                shorts_hour = (best_hour + 12) % 24
+                shorts_time = f"{shorts_hour:02d}:00"
+                print(f"  Upload time optimizer: {optimal['recommendation']}")
+                print(f"  Using optimized times: video={video_time}, shorts={shorts_time}")
+            else:
+                print(f"  Upload time optimizer: {optimal.get('recommendation', 'Not enough data yet')}")
+        except Exception as e:
+            print(f"  Warning: Schedule optimizer failed: {e}")
+
     # Create separate config for shorts with AI animation enabled
-    import copy
     shorts_config = copy.deepcopy(config)
     if animate_shorts:
         shorts_config["animation"]["provider"] = "ai_with_fallback"
 
     anim_label = " (AI animated)" if animate_shorts else ""
     for day in upload_days:
-        day_map[day].at("09:00").do(run_video_pipeline,  config=config)
-        day_map[day].at("21:00").do(run_shorts_pipeline, config=shorts_config)
-        print(f"  Scheduled: {day}  09:00 → video   21:00 → shorts{anim_label}")
+        day_map[day].at(video_time).do(run_video_pipeline,  config=config)
+        day_map[day].at(shorts_time).do(run_shorts_pipeline, config=shorts_config)
+        print(f"  Scheduled: {day}  {video_time} → video   {shorts_time} → shorts{anim_label}")
+
+    # v2: Auto-refresh trends daily at 03:00
+    if config.get("trends", {}).get("enabled", False):
+        schedule.every().day.at("03:00").do(_scheduled_trend_refresh, config=config)
+        print("  Scheduled: Daily 03:00 → trend refresh")
 
     print("\nScheduler running. Press Ctrl+C to stop.\n")
     while True:
         schedule.run_pending()
         time.sleep(60)
+
+
+def _scheduled_trend_refresh(config: dict):
+    """Auto-refresh trends (called by scheduler)."""
+    try:
+        from services.trend_service import refresh_trends
+        refresh_trends(config)
+    except Exception as e:
+        print(f"  Scheduled trend refresh failed: {e}")
 
 
 # ── Music pre-generation ──────────────────────────────────────────────────────
@@ -931,6 +1051,53 @@ if __name__ == "__main__":
         print("  python main.py --generate-music           # download 10 kids music tracks")
         print("  python main.py --generate-lullaby-music   # download lullaby music tracks")
         print("  python main.py --cleanup-old [--days 7] [--dry-run]  # clean old intermediate files")
+        print()
+        print("  v2 Growth Intelligence:")
+        print("  python main.py --analytics-sweep          # fetch analytics for all pending videos")
+        print("  python main.py --recompute-weights        # recompute category performance weights")
+        print("  python main.py --refresh-trends           # discover trending kids topics")
+        print("  python main.py --generate-clusters        # group topics into thematic clusters")
+        print("  python main.py --generate-series          # create episodic series from clusters")
+        print("  python main.py --list-series              # show active series with progress")
+        print("  python main.py --optimize-thumbnails      # replace underperforming thumbnails")
+
+    # --- v2 Growth Intelligence commands ---
+    elif "--analytics-sweep" in args:
+        init_db()
+        from services.analytics_service import run_analytics_sweep
+        run_analytics_sweep(config)
+
+    elif "--recompute-weights" in args:
+        init_db()
+        from services.analytics_service import compute_category_weights
+        compute_category_weights(config)
+
+    elif "--refresh-trends" in args:
+        init_db()
+        from services.trend_service import refresh_trends
+        refresh_trends(config)
+
+    elif "--generate-clusters" in args:
+        init_db()
+        from services.cluster_service import refresh_clusters
+        refresh_clusters(config)
+
+    elif "--generate-series" in args:
+        init_db()
+        from services.series_service import generate_series
+        generate_series(config)
+
+    elif "--list-series" in args:
+        init_db()
+        from services.series_service import list_series
+        list_series(config)
+
+    elif "--optimize-thumbnails" in args:
+        init_db()
+        from services.thumbnail_ab_service import run_thumbnail_optimization
+        run_thumbnail_optimization(config)
+
+    # --- Original commands ---
     elif "--generate-lullaby-music" in args:
         generate_lullaby_music_library(config)
     elif "--generate-music" in args:

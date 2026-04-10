@@ -50,9 +50,9 @@ tts:
   # then set the clone ID and enable it below. Disabled by default.
   # elevenlabs_use_clone: false
   # elevenlabs_voice_clone_id: "YOUR_CLONED_VOICE_ID"
-  # --- Sarvam AI (alternative, most authentic Hinglish) ---
+  # --- Sarvam AI Bulbul v3 (best for Hinglish, ~₹178/month for 3 shorts/day) ---
   # sarvam_api_key: "YOUR_SARVAM_API_KEY"
-  # sarvam_speaker: "meera"  # options: meera, pavithra, maitreyi, arvind, amol, amartya
+  # sarvam_speaker: "priya"  # female: priya, neha, pooja, kavya, shreya | male: shubh, rahul, amit
 
 # Language configuration — Hinglish only (Indian accent voices)
 languages:

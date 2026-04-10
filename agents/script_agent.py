@@ -126,6 +126,30 @@ Make sure "{character['name']}" appears in EVERY scene's visual_description.
 Example: "visual_description": "{character['name']} exploring a crystal cave filled with sparkling gems"
 """
 
+    # Retention optimization prompt
+    retention_prompt = ""
+    try:
+        from services.retention_service import get_retention_structure_prompt
+        retention_prompt = get_retention_structure_prompt("video", duration * 60)
+    except Exception:
+        pass
+
+    # Series continuity context
+    series_context = ""
+    if topic_data.get("series_name"):
+        ep_num = topic_data.get("episode_number", 1)
+        series_name = topic_data["series_name"]
+        continuity = topic_data.get("continuity_notes", "")
+        series_context = f"""
+SERIES CONTEXT:
+This is Episode {ep_num} of the series "{series_name}".
+{f'Series description: {topic_data.get("series_description", "")}' if topic_data.get("series_description") else ""}
+{f'Continuity notes: {continuity}' if continuity else ""}
+- Mention the series name and episode number naturally in the intro
+- If this is Episode 2+, briefly reference what was covered before
+- End with a teaser for the next episode in the series
+"""
+
     prompt = f"""Write a YouTube video script for kids aged {target_age}.
 
 Topic: {topic_data["topic"]}
@@ -135,6 +159,8 @@ Number of scenes: {num_scenes}
 {lang_instruction}
 {brand_voice}
 {character_instruction}
+{series_context}
+{retention_prompt}
 Rules:
 - Use simple, fun, engaging language for kids
 - Each scene narration should be 2-4 sentences
@@ -313,8 +339,16 @@ Keep visual_description in English."""
     target_scenes = config.get("shorts", {}).get("target_scenes", 3)
     max_duration = config.get("shorts", {}).get("max_duration", 59)
 
-    prompt = f"""You are optimizing a kids' video script for YouTube Shorts (vertical, max {max_duration} seconds).
+    # Retention optimization for shorts
+    shorts_retention = ""
+    try:
+        from services.retention_service import get_retention_structure_prompt
+        shorts_retention = get_retention_structure_prompt("shorts", max_duration)
+    except Exception:
+        pass
 
+    prompt = f"""You are optimizing a kids' video script for YouTube Shorts (vertical, max {max_duration} seconds).
+{shorts_retention}
 ORIGINAL FULL SCRIPT:
 Title: {script_data["title"]}
 Hook: {script_data["intro_hook"]}

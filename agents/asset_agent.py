@@ -273,13 +273,17 @@ def _generate_voiceover_sarvam(config: dict, texts: list[str],
     Sarvam AI is trained natively on code-mixed Hindi+English data. Hindi words
     like 'chalo', 'bahut', 'pyara' are pronounced authentically with no preprocessing.
 
-    Sign up (free ₹1000 credits): https://api.sarvam.ai
-    Available speakers: meera, pavithra, maitreyi, arvind, amol, amartya
-    REST API limit: 500 chars/call — longer scenes are chunked automatically.
+    Sign up: https://api.sarvam.ai
+    Bulbul v3 speakers: priya, neha, pooja, kavya, shreya, ishita, roopa, suhani, shruti,
+                        shubh, aditya, rahul, rohan, amit, dev, varun, kabir, and more.
+    Bulbul v3 limit: 2,500 chars/call (no chunking needed for typical scenes).
     """
     tts_cfg = config.get("tts", {})
     api_key = tts_cfg.get("sarvam_api_key", "")
-    speaker = tts_cfg.get("sarvam_speaker", "meera")
+    speaker = tts_cfg.get("sarvam_speaker", "priya")
+    lang_code = tts_cfg.get("sarvam_language_code", "hi-IN")
+    # Apply config pace override, but cap at 0.9 max — faster sounds sharp for kids content
+    cfg_pace = float(tts_cfg.get("sarvam_pace", pace))
 
     if not api_key:
         raise ValueError("tts.sarvam_api_key is not set in config.yaml")
@@ -289,12 +293,13 @@ def _generate_voiceover_sarvam(config: dict, texts: list[str],
     def _sarvam_call(text_chunk: str) -> bytes:
         r = requests.post(
             "https://api.sarvam.ai/text-to-speech",
-            headers={"API-Subscription-Key": api_key},
+            headers={"api-subscription-key": api_key},
             json={
-                "inputs": [text_chunk],
-                "target_language_code": "hi-IN",   # hi-IN enables Hinglish mode
+                "text": text_chunk,
+                "model": "bulbul:v3",
+                "target_language_code": lang_code,
                 "speaker": speaker,
-                "pace": pace,
+                "pace": cfg_pace,
                 "enable_preprocessing": True,      # handles code-mixed text
             },
             timeout=30,
@@ -305,8 +310,8 @@ def _generate_voiceover_sarvam(config: dict, texts: list[str],
     audio_files = []
 
     for i, text in enumerate(texts):
-        # Chunk at 490 chars to stay within the 500-char REST API limit
-        chunks = [text[j:j + 490] for j in range(0, len(text), 490)]
+        # Chunk at 2000 chars — safely under the 2,500-char v3 limit
+        chunks = [text[j:j + 2000] for j in range(0, len(text), 2000)]
         combined = b""
         for chunk in chunks:
             combined += _sarvam_call(chunk)

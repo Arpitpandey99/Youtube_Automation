@@ -156,6 +156,17 @@ def get_performance_hints(config: dict) -> str:
         for rec in analysis["recommendations"][:2]:
             hints.append(f"  - {rec}")
 
+    # Include category probability weights if available
+    try:
+        from agents.db import get_category_weights
+        weights = get_category_weights()
+        if weights:
+            hints.append("\nCATEGORY WEIGHTS (generate topics from these categories proportionally):")
+            for w in weights[:8]:
+                hints.append(f"  {w['category']}: {w['weight']*100:.0f}%")
+    except Exception:
+        pass
+
     return "\n".join(hints)
 
 

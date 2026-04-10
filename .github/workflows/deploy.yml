@@ -46,7 +46,7 @@ jobs:
           server_port: 587
           username: ${{ secrets.GMAIL_SENDER }}
           password: ${{ secrets.GMAIL_APP_PASSWORD }}
-          to: arpitpandey6599@gmail.com,prachipandey2024@gmail.com
+          to: arpitpandey6599@gmail.com
           from: YouTube Bot <${{ secrets.GMAIL_SENDER }}>
           subject: "[YouTube Bot] Deployed successfully — ${{ github.sha }}"
           body: |
@@ -69,7 +69,7 @@ jobs:
           server_port: 587
           username: ${{ secrets.GMAIL_SENDER }}
           password: ${{ secrets.GMAIL_APP_PASSWORD }}
-          to: arpitpandey6599@gmail.com,prachipandey2024@gmail.com
+          to: arpitpandey6599@gmail.com
           from: YouTube Bot <${{ secrets.GMAIL_SENDER }}>
           subject: "[YouTube Bot] Deployment FAILED — ${{ github.sha }}"
           body: |
