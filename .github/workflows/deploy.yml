@@ -8,7 +8,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Pull latest code on EC2
+      - name: Deploy and restart scheduler on EC2
         id: deploy
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -36,7 +36,23 @@ jobs:
             source venv/bin/activate
             pip install -r requirements.txt --quiet
 
-            echo "✅ Deployed successfully at $(date)"
+            # Initialize DB (creates any new tables from code changes)
+            python -c "from agents.db import init_db; init_db()" || true
+
+            # Restart the scheduler service so it picks up the new code
+            sudo systemctl restart youtube-bot
+
+            # Verify service is running
+            sleep 3
+            if sudo systemctl is-active --quiet youtube-bot; then
+              echo "youtube-bot restarted successfully at $(date)"
+            else
+              echo "ERROR: youtube-bot failed to start after deploy!"
+              journalctl -u youtube-bot -n 20 --no-pager
+              exit 1
+            fi
+
+            echo "Deployed successfully at $(date)"
 
       - name: Send deployment success email
         if: success()
@@ -60,6 +76,7 @@ jobs:
             Message: ${{ github.event.head_commit.message }}
 
             EC2 is now running the latest code.
+            Scheduler service (youtube-bot) has been restarted.
 
       - name: Send deployment failure email
         if: failure()

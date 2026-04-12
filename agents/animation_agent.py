@@ -413,6 +413,10 @@ def _animate_with_kling(config: dict, image_path: str,
     model = kling_config.get("model", "fal-ai/kling-video/v3/pro/image-to-video")
     duration = kling_config.get("duration", 5)
 
+    # Auto-detect aspect ratio from video resolution (landscape=16:9, portrait=9:16)
+    res = config.get("video", {}).get("resolution", [1280, 720])
+    aspect_ratio = "9:16" if res[1] > res[0] else "16:9"
+
     # fal.ai needs an image URL, not a local file — upload via data URI
     with open(image_path, "rb") as f:
         image_bytes = f.read()
@@ -426,7 +430,7 @@ def _animate_with_kling(config: dict, image_path: str,
     os.environ["FAL_KEY"] = api_key
 
     get_limiter("fal_ai").acquire()
-    print(f"    Kling 3.0: Generating clip via fal.ai...")
+    print(f"    Kling 3.0: Generating clip via fal.ai ({aspect_ratio})...")
 
     for attempt in range(3):
         try:
@@ -436,7 +440,7 @@ def _animate_with_kling(config: dict, image_path: str,
                     "prompt": prompt,
                     "image_url": image_data_uri,
                     "duration": str(duration),
-                    "aspect_ratio": "16:9",
+                    "aspect_ratio": aspect_ratio,
                 },
             )
             break

@@ -787,11 +787,25 @@ def run_lullaby_pipeline(config: dict, upload: bool = True) -> dict:
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
+def _safe_run(func, func_name: str, **kwargs):
+    """Wrapper that catches exceptions so the scheduler loop never dies."""
+    try:
+        func(**kwargs)
+    except Exception as e:
+        print(f"\n  SCHEDULER: {func_name} failed: {e}")
+        print(f"  SCHEDULER: Will retry at next scheduled time. Scheduler continues.\n")
+        import traceback
+        traceback.print_exc()
+
+
 def start_scheduler(config: dict, animate_shorts: bool = False):
     """Run video at 09:00 IST and shorts at 21:00 IST, every configured day.
 
     If schedule.optimize_time is enabled and enough data exists,
     uses the optimal upload time instead of hardcoded times.
+
+    All pipeline runs are wrapped in _safe_run so a single failure
+    never kills the scheduler process.
     """
     upload_days = config["schedule"].get(
         "upload_days",
@@ -834,8 +848,10 @@ def start_scheduler(config: dict, animate_shorts: bool = False):
 
     anim_label = " (AI animated)" if animate_shorts else ""
     for day in upload_days:
-        day_map[day].at(video_time).do(run_video_pipeline,  config=config)
-        day_map[day].at(shorts_time).do(run_shorts_pipeline, config=shorts_config)
+        day_map[day].at(video_time).do(
+            _safe_run, run_video_pipeline, "video_pipeline", config=config)
+        day_map[day].at(shorts_time).do(
+            _safe_run, run_shorts_pipeline, "shorts_pipeline", config=shorts_config)
         print(f"  Scheduled: {day}  {video_time} → video   {shorts_time} → shorts{anim_label}")
 
     # v2: Auto-refresh trends daily at 03:00
@@ -844,6 +860,8 @@ def start_scheduler(config: dict, animate_shorts: bool = False):
         print("  Scheduled: Daily 03:00 → trend refresh")
 
     print("\nScheduler running. Press Ctrl+C to stop.\n")
+    import sys
+    sys.stdout.flush()
     while True:
         schedule.run_pending()
         time.sleep(60)

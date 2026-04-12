@@ -1,0 +1,33 @@
+[Unit]
+Description=YouTube Kids Automation Scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/youtube_automation
+Environment=PATH=/home/ubuntu/youtube_automation/venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/youtube_automation/venv/bin/python main.py --schedule
+
+# Auto-restart on crash with increasing backoff (5s, 10s, 20s, 40s... capped at 5min)
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+# OOM protection: prefer killing other things, not us
+OOMScoreAdjust=-500
+
+# Logging — viewable via: journalctl -u youtube-bot -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=youtube-bot
+
+# Graceful shutdown
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
