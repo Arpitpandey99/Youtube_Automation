@@ -9,6 +9,7 @@ venv/
 config.yaml
 client_secrets.json
 token.json
+token.json.bak
 instagram_session.json
 
 # Generated output
@@ -17,7 +18,9 @@ output/
 # Data files (topics history can be committed, music is large)
 data/music/
 data/pipeline.db
+data/ec2_pipeline.db*
 data/topics_history.json
+data/ec2_topics_history.json
 
 # OS files
 .DS_Store
