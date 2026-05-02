@@ -1,0 +1,73 @@
+# Quality Rubric — LLM-as-judge scoring for scripts
+# Total: 0-100 (4 axes, 0-25 each)
+#
+# Thresholds:
+#   >= 80: auto-approve, proceed to asset generation
+#   70-79: flag for human review in Telegram
+#   < 70:  auto-reject, regenerate with rewrite_suggestions (max 3 retries)
+
+thresholds:
+  approve: 80
+  flag_for_review: 70
+  max_retries: 3
+
+axes:
+  hook:
+    weight: 25
+    description: "Does the first 8 seconds stop scrolling?"
+    criteria:
+      - "Opens with a surprising fact, question, or counterintuitive claim"
+      - "Creates an information gap the viewer wants closed"
+      - "Avoids generic openings ('Aaj hum baat karenge...')"
+      - "Specific enough to feel researched, not templated"
+    scoring:
+      0-5: "Generic or missing hook. Template opening."
+      6-10: "Hook exists but is weak or predictable."
+      11-15: "Decent hook with some curiosity gap."
+      16-20: "Strong hook that creates clear information gap."
+      21-25: "Exceptional hook — surprising, specific, impossible to scroll past."
+
+  narrative:
+    weight: 25
+    description: "Does the script follow problem → mechanism → resolution?"
+    criteria:
+      - "Clear three-act structure: setup, mechanism/explanation, payoff"
+      - "Each scene builds on the previous one (not a random listicle)"
+      - "Viewer can predict 'where this is going' but is surprised by specifics"
+      - "Ends with a satisfying resolution or 'aha moment'"
+    scoring:
+      0-5: "No structure. Random facts dumped in sequence."
+      6-10: "Loose structure but feels like a listicle, not a story."
+      11-15: "Recognizable arc but weak transitions between scenes."
+      16-20: "Clear three-act structure with logical flow."
+      21-25: "Masterful arc — each scene builds tension, resolution is satisfying."
+
+  specificity:
+    weight: 25
+    description: "Does it use concrete numbers, names, dates, and examples?"
+    criteria:
+      - "Uses specific numbers (₹2 per transaction, 350M users)"
+      - "Names real systems, protocols, organizations"
+      - "Cites time periods or historical dates"
+      - "Avoids vague filler ('bahut important hai', 'kaafi useful')"
+    scoring:
+      0-5: "All vague. No concrete details. Could be about any topic."
+      6-10: "1-2 specific facts, rest is filler."
+      11-15: "Several specific details but some scenes still vague."
+      16-20: "Most scenes have concrete, verifiable facts."
+      21-25: "Every claim is specific and sourceable. Feels deeply researched."
+
+  hinglish:
+    weight: 25
+    description: "Is the Hinglish natural, not robotic?"
+    criteria:
+      - "Code-switching feels organic (60-70% English, 30-40% Hindi)"
+      - "Uses colloquial Hindi naturally ('samjho', 'matlab', 'aur sabse interesting')"
+      - "Doesn't feel like English text with random Hindi words inserted"
+      - "Matches how educated urban Indians actually speak about tech"
+    scoring:
+      0-5: "Pure English or pure Hindi. No code-switching."
+      6-10: "Forced code-switching. Hindi feels inserted, not natural."
+      11-15: "Decent mix but some phrases feel robotic or unnatural."
+      16-20: "Natural Hinglish that sounds like a real person explaining."
+      21-25: "Indistinguishable from a fluent Hinglish speaker's casual explanation."

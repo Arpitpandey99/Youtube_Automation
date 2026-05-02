@@ -1,0 +1,51 @@
+# Competitor Channels — Seed list for competitor_agent weekly analysis
+#
+# Used by agents/competitor_agent.py weekly_intel() to track what's
+# working in the Hinglish tech/explainer niche.
+#
+# Format:
+#   channel_id: YouTube channel ID
+#   channel_name: Human-readable name
+#   category: Content category for grouping
+#
+# To find channel IDs:
+#   1. Go to the channel page
+#   2. View page source, search for "channelId"
+#   OR use: https://www.youtube.com/channel/<CHANNEL_ID>
+
+seed_channels:
+  - channel_name: "Be A Engineer"
+    channel_id: ""           # TODO: Fill in channel ID
+    category: "hindi_tech"
+
+  - channel_name: "Tech Burner"
+    channel_id: ""           # TODO: Fill in channel ID
+    category: "hindi_tech"
+
+  - channel_name: "Geeky Ranjit"
+    channel_id: ""           # TODO: Fill in channel ID
+    category: "hindi_tech"
+
+  - channel_name: "Technical Guruji"
+    channel_id: ""           # TODO: Fill in channel ID
+    category: "hindi_tech"
+
+# Add 6-8 more after first competitor_agent run:
+# - Hinglish education channels
+# - Indian tech explainer channels
+# - Science/infrastructure channels in Hindi
+#
+# Example additions:
+#   - channel_name: "Dhruv Rathee"
+#     channel_id: ""
+#     category: "hinglish_explainer"
+#
+#   - channel_name: "Nitish Rajput"
+#     channel_id: ""
+#     category: "hinglish_explainer"
+
+# Analysis settings
+analysis:
+  lookback_days: 30          # How far back to scan each channel
+  top_n: 10                  # Number of top videos to extract patterns from
+  min_view_to_sub_ratio: 0.05  # Minimum ratio to consider a video notable

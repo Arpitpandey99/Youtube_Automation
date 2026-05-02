@@ -1,0 +1,35 @@
+# Budget Configuration — Hard monthly caps per provider
+# Enforced by agents/budget_guard.py @budget_guard decorator
+#
+# Thresholds:
+#   60% → log warning
+#   80% → log warning + Telegram alert
+#  100% → raise BudgetExceededError (agent fails gracefully)
+#
+# Resets monthly on the 1st.
+
+monthly_caps_inr:
+  openai: 500       # GPT-4o-mini (research + script + quality + metadata)
+  sarvam: 400       # Sarvam Bulbul v3 TTS
+  replicate: 700    # FLUX schnell images (long-form)
+  huggingface: 0    # Free tier only
+  web_search: 100   # Web search API calls (research_agent)
+  total: 1500       # Absolute ceiling — kill switch fires above this
+
+alert_thresholds:
+  warning: 0.6      # 60% of cap
+  alert: 0.8        # 80% of cap + Telegram notification
+  kill: 1.0         # 100% — raise BudgetExceededError
+
+# Per-call cost estimates (for budget_guard to log)
+# These are approximate; actual costs may vary
+cost_estimates:
+  openai:
+    gpt4o_mini_per_1k_input: 0.013     # INR (~$0.15/1M tokens)
+    gpt4o_mini_per_1k_output: 0.050    # INR (~$0.60/1M tokens)
+  sarvam:
+    bulbul_per_10k_chars: 30.0         # INR
+  replicate:
+    flux_schnell_per_image: 2.5        # INR (~$0.003)
+  web_search:
+    per_query: 1.0                     # INR (estimated)
