@@ -1,8 +1,0 @@
-{
-  "id": "owl_storyteller",
-  "name": "Ollie the Owl",
-  "description": "A wise little brown owl with big round glasses, a tiny graduation cap, and a warm orange belly",
-  "image_prompt_prefix": "with a wise little owl wearing round glasses and a tiny graduation cap in the scene",
-  "content_types": ["story", "video"],
-  "personality_note": "knowledgeable, encouraging, loves facts"
-}

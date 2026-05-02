@@ -17,7 +17,9 @@ output/
 
 # Data files (topics history can be committed, music is large)
 data/music/
+data/music_archive/
 data/pipeline.db
+data/pipeline_v1_archive.db
 data/ec2_pipeline.db*
 data/topics_history.json
 data/ec2_topics_history.json
