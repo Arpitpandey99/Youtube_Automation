@@ -135,6 +135,85 @@ def upload_video(config: dict, video_path: str, metadata: dict,
     return video_url, video_id
 
 
+def queue_for_approval(run_id: str, video_path: str, quality_score: int,
+                       config: dict = None) -> int:
+    """Queue a video candidate for Telegram approval instead of uploading directly.
+
+    Args:
+        run_id: Pipeline run identifier.
+        video_path: Path to the assembled video file.
+        quality_score: Total quality score from quality_agent.
+        config: Pipeline config (for Telegram notification).
+
+    Returns:
+        int row ID of the approval queue entry.
+    """
+    from services.approval_queue_service import enqueue
+    row_id = enqueue(run_id, video_path, quality_score)
+    print(f"  Queued for approval: run_id={run_id}, quality={quality_score}")
+    return row_id
+
+
+def publish_from_queue(config: dict, dry_run: bool = False) -> list[dict]:
+    """Publish all approved candidates from the approval queue.
+
+    Args:
+        config: Pipeline config dict.
+        dry_run: If True, log what would be uploaded without actually uploading.
+
+    Returns:
+        list of dicts with upload results.
+    """
+    from services.approval_queue_service import get_approved, mark_rejected
+    from agents.db import update_approval_status
+
+    approved = get_approved()
+    if not approved:
+        print("  No approved candidates to publish.")
+        return []
+
+    results = []
+    for entry in approved:
+        run_id = entry["run_id"]
+        candidate_path = entry.get("candidate_path", "")
+
+        if not candidate_path or not os.path.exists(candidate_path):
+            print(f"  Skipping {run_id}: candidate file not found at {candidate_path}")
+            update_approval_status(run_id, "rejected", "candidate_file_missing")
+            continue
+
+        # Load metadata from the run directory
+        run_dir = os.path.dirname(os.path.dirname(candidate_path))
+        metadata_path = os.path.join(os.path.dirname(candidate_path), "metadata.json")
+
+        if not os.path.exists(metadata_path):
+            print(f"  Skipping {run_id}: metadata.json not found")
+            update_approval_status(run_id, "rejected", "metadata_missing")
+            continue
+
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+
+        if dry_run:
+            print(f"  [DRY RUN] Would upload: {run_id} — '{metadata.get('title', 'untitled')}'")
+            results.append({"run_id": run_id, "status": "dry_run", "title": metadata.get("title")})
+            continue
+
+        # Upload
+        try:
+            print(f"  Publishing: {run_id} — '{metadata.get('title', '')}'")
+            thumb_path = os.path.join(os.path.dirname(candidate_path), "thumbnail.png")
+            thumb = thumb_path if os.path.exists(thumb_path) else None
+            video_url, video_id = upload_video(config, candidate_path, metadata, thumb)
+            update_approval_status(run_id, "published", f"uploaded as {video_id}")
+            results.append({"run_id": run_id, "status": "published", "video_url": video_url, "video_id": video_id})
+        except Exception as e:
+            print(f"  Upload failed for {run_id}: {e}")
+            results.append({"run_id": run_id, "status": "failed", "error": str(e)})
+
+    return results
+
+
 def upload_captions(config: dict, video_id: str, srt_path: str,
                     language: str = "en", name: str = "Auto-generated"):
     """Upload an SRT caption file to a YouTube video."""

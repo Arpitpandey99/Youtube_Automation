@@ -7,6 +7,7 @@ import time
 import edge_tts
 
 from agents.rate_limiter import get_limiter
+from agents.budget_guard import log_cost
 
 
 def _sanitize_tts_text(text: str) -> str:
@@ -282,7 +283,6 @@ def _generate_voiceover_sarvam(config: dict, texts: list[str],
     api_key = tts_cfg.get("sarvam_api_key", "")
     speaker = tts_cfg.get("sarvam_speaker", "priya")
     lang_code = tts_cfg.get("sarvam_language_code", "hi-IN")
-    # Apply config pace override, but cap at 0.9 max — faster sounds sharp for kids content
     cfg_pace = float(tts_cfg.get("sarvam_pace", pace))
 
     if not api_key:
@@ -321,6 +321,14 @@ def _generate_voiceover_sarvam(config: dict, texts: list[str],
         with open(filepath, "wb") as f:
             f.write(combined)
         audio_files.append(filepath)
+
+    # Log cost: Sarvam Bulbul v3 charges ~INR 30 per 10K chars
+    total_chars = sum(len(t) for t in texts)
+    estimated_cost = (total_chars / 10000) * 30.0
+    try:
+        log_cost("sarvam", "tts_bulbul_v3", estimated_cost)
+    except Exception:
+        pass
 
     return audio_files
 
@@ -593,6 +601,12 @@ def generate_images_replicate(config: dict, script_data: dict, output_dir: str) 
         print(f"    Scene {i+1}/{len(script_data['scenes'])} done")
 
         get_limiter("replicate").acquire()
+
+    # Log cost: FLUX schnell ~INR 2.5 per image
+    try:
+        log_cost("replicate", "flux_schnell", len(image_files) * 2.5)
+    except Exception:
+        pass
 
     return image_files
 

@@ -1,9 +1,8 @@
 """Animation agent — converts static images into animated video clips.
 
-Three provider modes:
-  - "kenburns" (default, free): Pan/zoom effects via MoviePy
-  - "ai" (paid): AI image-to-video (Veo 2, Kling 3.0, or Replicate)
-  - "ai_with_fallback": Try AI, fall back to Ken Burns on failure
+v2: Ken Burns only. AI video providers (Kling, Veo) removed — too expensive
+for the budget ceiling. Ken Burns with varied zoom/pan profiles provides
+sufficient visual diversity.
 """
 
 import base64
@@ -513,53 +512,21 @@ def _animate_with_replicate(config: dict, image_path: str,
 
 def animate_scene(config: dict, image_path: str, duration: float,
                   scene_description: str, output_path: str) -> str:
-    """Animate a single scene image into a video clip.
+    """Animate a single scene image into a video clip using Ken Burns effects.
 
-    For AI providers: generates a short clip (5s), then extends to full
-    duration using speed reduction + Ken Burns hybrid approach.
+    v2: AI video providers (Kling, Veo) removed — Ken Burns only.
 
     Args:
         config: Full pipeline config
         image_path: Path to the scene image
         duration: Target duration in seconds (matches audio)
-        scene_description: Visual description (used by AI provider)
+        scene_description: Visual description (unused in Ken Burns mode)
         output_path: Where to save the animated clip
 
     Returns:
         Path to the animated video clip (.mp4)
     """
-    provider = config.get("animation", {}).get("provider", "kenburns")
-    ai_provider = config.get("animation", {}).get("ai", {}).get("provider", "replicate")
-    fallback = config.get("animation", {}).get("ai", {}).get("fallback_to_kenburns", True)
-
-    if provider in ("ai", "ai_with_fallback"):
-        try:
-            # Generate short AI clip (5 seconds)
-            temp_clip = output_path.replace(".mp4", "_ai_raw.mp4")
-
-            if ai_provider == "veo":
-                _animate_with_veo(config, image_path, scene_description, temp_clip)
-            elif ai_provider == "kling":
-                _animate_with_kling(config, image_path, scene_description, temp_clip)
-            else:
-                _animate_with_replicate(config, image_path, scene_description, temp_clip)
-
-            # Extend to full duration using speed reduction + Ken Burns
-            _extend_clip_to_duration(temp_clip, duration, image_path, config, output_path)
-
-            # Cleanup raw AI clip
-            if os.path.exists(temp_clip):
-                os.remove(temp_clip)
-
-            return output_path
-
-        except Exception as e:
-            if provider == "ai_with_fallback" or fallback:
-                print(f"    AI animation failed ({e}), falling back to Ken Burns...")
-                return _animate_kenburns(config, image_path, duration, output_path)
-            raise
-    else:
-        return _animate_kenburns(config, image_path, duration, output_path)
+    return _animate_kenburns(config, image_path, duration, output_path)
 
 
 def animate_all_scenes(config: dict, image_files: list, audio_files: list,
@@ -576,26 +543,7 @@ def animate_all_scenes(config: dict, image_files: list, audio_files: list,
     clips_dir = os.path.join(output_dir, "animated_clips")
     os.makedirs(clips_dir, exist_ok=True)
 
-    provider = config.get("animation", {}).get("provider", "kenburns")
-    ai_config = config.get("animation", {}).get("ai", {})
-
-    # Cost estimation for AI providers
-    if provider in ("ai", "ai_with_fallback"):
-        ai_provider = ai_config.get("provider", "replicate")
-        clip_dur = ai_config.get("clip_duration", 5)
-        cost_map = ai_config.get("cost_per_second", {})
-        cost_per_sec = cost_map.get(ai_provider, 0.04)
-        num_scenes = len(image_files)
-        est_cost = num_scenes * clip_dur * cost_per_sec
-        cost_limit = ai_config.get("cost_limit_per_video", 5.0)
-
-        print(f"  AI animation ({ai_provider}): ~${est_cost:.2f} for {num_scenes} scenes")
-
-        if est_cost > cost_limit:
-            print(f"  WARNING: Exceeds cost limit (${cost_limit:.2f}). Falling back to Ken Burns.")
-            config = copy.deepcopy(config)
-            config["animation"]["provider"] = "kenburns"
-
+    # v2: Ken Burns only (AI video providers removed for budget reasons)
     animated_clips = []
     for i, (img_path, audio_path) in enumerate(zip(image_files, audio_files)):
         audio = AudioFileClip(audio_path)

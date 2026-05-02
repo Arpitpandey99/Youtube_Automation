@@ -81,52 +81,78 @@ def _get_brand_voice_instructions(config: dict) -> str:
     return "\n".join(parts)
 
 
-def generate_script(config: dict, topic_data: dict, language: str = "English") -> dict:
-    """Generate a scene-by-scene script for the video in the specified language."""
+def generate_script(config: dict, topic_data: dict, language: str = "English",
+                    fact_sheet: dict | None = None,
+                    rewrite_suggestions: list[str] | None = None) -> dict:
+    """Generate a scene-by-scene script for a tech-explainer video.
+
+    Args:
+        config: Pipeline config dict.
+        topic_data: Topic dict from topic_agent.
+        language: Language name ("Hindi" triggers Hinglish mode).
+        fact_sheet: Optional research fact sheet from research_agent.
+        rewrite_suggestions: Optional list of suggestions from quality_agent retry.
+    """
     client = OpenAI(api_key=config["openai"]["api_key"])
     num_scenes = config["content"]["scenes_per_video"]
     duration = config["content"]["video_duration_minutes"]
-    target_age = topic_data["target_age"]
-    character = _load_character(config)
 
     lang_instruction = ""
     if language == "Hindi":
         lang_instruction = """
-IMPORTANT LANGUAGE RULES — HINGLISH (mostly English with Hindi flavor):
+IMPORTANT LANGUAGE RULES — HINGLISH (tech-explainer tone):
 - Write narration in HINGLISH — 60-70% English with 30-40% Hindi words mixed in naturally
-- Keep ALL greetings and exclamations in ENGLISH: "Hey there little explorers!", "Oh my goodness!", "That's SO cool!"
-- NEVER translate greetings to pure Hindi (NO "wahh", NO "chhote", NO formal Hindi intros)
-- Hindi words to sprinkle in: "bacchon", "bahut", "chalo", "dekho", "pata hai", "kitna", "duniya", "sabse"
-- GOOD: "Hey there little explorers! Aaj hum discover karenge some AMAZING facts!"
-- GOOD: "Can you believe it?! Yeh toh bahut interesting hai!"
-- GOOD: "Chalo guys, let's jump into today's super fun adventure!"
-- BAD: "Hey wahh chhote explorers!" (awkward, unnatural)
-- BAD: "Aaj hum janenge phalon ke baare mein" (too formal Hindi)
+- Sound like an educated urban Indian explaining tech to a friend over chai
+- Hindi words to use naturally: "samjho", "matlab", "aur sabse interesting baat", "dekho", "pata hai", "basically"
+- GOOD: "Toh samjho, jab aap UPI se paise bhejte ho, toh pehle ek encrypted request jaati hai NPCI ke server ko."
+- GOOD: "Aur sabse interesting baat? Ye sab real-time hota hai — matlab T+0 settlement!"
+- BAD: "Aaj hum jaanenge UPI ke baare mein" (too formal, sounds like a textbook)
+- BAD: Pure English with zero Hindi (this is a Hinglish channel)
 - Write the "title" in Hinglish too
-- Keep "visual_description" in ENGLISH (it is used for image generation)
-- Sound like a fun Indian YouTuber who naturally speaks English with Hindi mixed in"""
-    elif language != "English":
-        lang_instruction = f"""
-IMPORTANT LANGUAGE RULES:
-- Write ALL narration text (intro_hook, narration, outro) in {language} language.
-- Write the "title" in {language} language.
-- Keep "visual_description" in ENGLISH (it is used for image generation).
-- Use simple {language} that kids can understand."""
+- Keep "visual_description" in ENGLISH (used for AI image generation)
+- Tone: curious, informed, slightly amazed — NOT childish, NOT lecturing"""
 
     brand_voice = _get_brand_voice_instructions(config)
 
-    # Character instruction — injected into prompt if a character is configured
-    character_instruction = ""
-    if character:
-        character_instruction = f"""
-CHARACTER CONSISTENCY:
-The main character appearing in this video is "{character['name']}".
-Description: {character['description']}
-Make sure "{character['name']}" appears in EVERY scene's visual_description.
-Example: "visual_description": "{character['name']} exploring a crystal cave filled with sparkling gems"
+    # Fact sheet integration — the key v2 differentiator
+    fact_sheet_section = ""
+    if fact_sheet:
+        key_facts = json.dumps(fact_sheet.get("key_facts", [])[:8], indent=2, ensure_ascii=False)
+        narrative_arc = json.dumps(fact_sheet.get("narrative_arc", {}), indent=2, ensure_ascii=False)
+        terms = json.dumps(fact_sheet.get("technical_terms", [])[:5], indent=2, ensure_ascii=False)
+        misconceptions = json.dumps(fact_sheet.get("common_misconceptions", []), indent=2, ensure_ascii=False)
+        credibility = ", ".join(fact_sheet.get("credibility_signals", []))
+
+        fact_sheet_section = f"""
+RESEARCH FACT SHEET (use these verified facts in the script):
+
+KEY FACTS:
+{key_facts}
+
+NARRATIVE ARC (follow this structure):
+{narrative_arc}
+
+TECHNICAL TERMS (explain these naturally in the narration):
+{terms}
+
+COMMON MISCONCEPTIONS (address at least one):
+{misconceptions}
+
+CREDIBILITY SIGNALS (mention naturally): {credibility}
+
+IMPORTANT: Every factual claim in your script MUST come from the fact sheet above.
+Do NOT make up statistics or facts not in the research."""
+
+    # Rewrite suggestions from quality_agent retry
+    rewrite_section = ""
+    if rewrite_suggestions:
+        suggestions_text = "\n".join(f"  - {s}" for s in rewrite_suggestions)
+        rewrite_section = f"""
+REWRITE INSTRUCTIONS (this is a retry — fix these issues from the previous attempt):
+{suggestions_text}
 """
 
-    # Retention optimization prompt
+    # Retention optimization
     retention_prompt = ""
     try:
         from services.retention_service import get_retention_structure_prompt
@@ -150,55 +176,47 @@ This is Episode {ep_num} of the series "{series_name}".
 - End with a teaser for the next episode in the series
 """
 
-    prompt = f"""Write a YouTube video script for kids aged {target_age}.
+    prompt = f"""Write a YouTube tech-explainer video script in Hinglish.
 
 Topic: {topic_data["topic"]}
-Description: {topic_data["description"]}
+Description: {topic_data.get("description", "")}
 Target duration: {duration} minutes
 Number of scenes: {num_scenes}
 {lang_instruction}
 {brand_voice}
-{character_instruction}
+{fact_sheet_section}
+{rewrite_section}
 {series_context}
 {retention_prompt}
-Rules:
-- Use simple, fun, engaging language for kids
-- Each scene narration should be 2-4 sentences
-- Include fun facts or questions to keep kids engaged
-- NO scary or inappropriate content
-- Write narration in a CONVERSATIONAL, ENTHUSIASTIC tone — like an excited friend telling a cool story
-- Use exclamation marks, rhetorical questions ("Can you believe that?!", "Isn't that amazing?!"), and dramatic pauses ("And guess what...")
-- Add emotional expressions: "Wow!", "Oh my goodness!", "That's SO cool!", "Whoa!"
-- Vary sentence length — mix short punchy sentences with slightly longer ones for natural rhythm
-- Avoid formal or robotic phrasing — write the way a fun, energetic storyteller would SPEAK, not write
-
-HOOK FORMAT — Choose the ONE format below that best fits the topic (must be topic-specific, HIGH ENERGY, max 2 sentences):
-  FORMAT A — Curiosity Question: "Kya tumhe pata hai? [1 surprising fact about {topic_data['topic']}]? Chalo find out karte hain!"
-  FORMAT B — Shocking Fact: "Did you know? [1 mind-blowing thing about {topic_data['topic']}]! Bahut amazing hai na?!"
-  FORMAT C — Challenge: "I bet you can't guess [intriguing mystery about {topic_data['topic']}]! Let's discover together!"
-Pick the format that creates the most curiosity about this specific topic. Never use a generic opener like "Hey there little explorers!" alone.
+STRUCTURE REQUIREMENTS:
+- HOOK (first 8 seconds): Open with a surprising fact, counterintuitive claim, or question that creates an information gap. Must be topic-specific, NOT generic.
+- NARRATIVE ARC: Follow problem → mechanism → resolution. Each scene builds on the previous one.
+- SPECIFICITY: Use concrete numbers, names, dates from the fact sheet. No vague filler like "bahut important hai."
+- Each scene narration should be 3-5 sentences for long-form depth
+- End with a satisfying "aha moment" or resolution, not a generic sign-off
+- visual_description should describe diagrams, system flows, or abstract tech concepts — NOT cartoon characters
 
 Respond in this exact JSON format:
 {{
-    "title": "video title",
-    "intro_hook": "topic-specific exciting hook using one of the 3 formats above",
+    "title": "Hinglish video title",
+    "intro_hook": "8-second hook with specific fact/question",
     "scenes": [
         {{
             "scene_number": 1,
-            "visual_description": "describe what should be shown visually IN ENGLISH (for image generation)",
-            "narration": "the voiceover text for this scene"
+            "visual_description": "describe diagram/infographic/system flow IN ENGLISH",
+            "narration": "the Hinglish voiceover text for this scene"
         }}
     ],
-    "outro": "a fun closing line encouraging kids to like and subscribe"
+    "outro": "closing line with a thought-provoking takeaway"
 }}
 
 Only return the JSON, nothing else."""
 
-    system_msg = "You write engaging, educational scripts for kids' YouTube videos. Always respond with valid JSON only. Keep language simple and fun."
-    if language == "Hindi":
-        system_msg += " Write narration in Hinglish (casual Hindi-English mix, the way Indian kids actually speak). Keep visual_description in English."
-    elif language != "English":
-        system_msg += f" Write narration in {language}. Keep visual_description in English."
+    system_msg = (
+        "You write engaging Hinglish tech-explainer scripts for YouTube. "
+        "Tone: curious, informed, slightly amazed — like a smart friend explaining how something works. "
+        "Always respond with valid JSON only. Keep visual_description in English."
+    )
 
     response = client.chat.completions.create(
         model=config["openai"]["model"],
@@ -207,13 +225,10 @@ Only return the JSON, nothing else."""
             {"role": "user", "content": prompt}
         ],
         temperature=0.7,
-        max_tokens=2000,
+        max_tokens=3000,
     )
 
     script_data = json.loads(response.choices[0].message.content.strip())
-    # Attach character_id so image generation can inject the character into prompts
-    if character:
-        script_data["character_id"] = character["id"]
     return script_data
 
 
