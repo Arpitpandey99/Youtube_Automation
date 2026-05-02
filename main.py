@@ -318,6 +318,7 @@ def run_video_pipeline(config: dict, upload: bool = True) -> dict:
             except Exception as e:
                 print(f"  Upload failed: {e}")
                 log_run(run_dir, "upload", "failed", {"error": str(e)})
+                result["upload_error"] = str(e)
         else:
             print("[9] Upload skipped (--no-upload mode)")
 
@@ -348,6 +349,7 @@ def run_video_pipeline(config: dict, upload: bool = True) -> dict:
         _cleanup(lang_dir, image_dir)
 
         run_summary["videos"].append(result)
+        run_summary["pipeline_type"] = "video"
 
         print(f"\n{'='*60}")
         print(f"  Video Pipeline complete!  Output: {run_dir}")
@@ -359,6 +361,10 @@ def run_video_pipeline(config: dict, upload: bool = True) -> dict:
     except Exception as e:
         print(f"\n  ERROR: {e}")
         log_run(run_dir, "error", "failed", {"error": str(e)})
+        run_summary["videos"].append(result)
+        run_summary["pipeline_type"] = "video"
+        run_summary["fatal_error"] = str(e)
+        send_run_summary(config, run_summary)
         raise
 
 
@@ -467,6 +473,7 @@ def run_shorts_pipeline(config: dict, upload: bool = True) -> dict:
             except Exception as e:
                 print(f"  Upload failed: {e}")
                 log_run(run_dir, "upload", "failed", {"error": str(e)})
+                result["upload_error"] = str(e)
         else:
             print("[9] Upload skipped (--no-upload mode)")
 
@@ -493,6 +500,7 @@ def run_shorts_pipeline(config: dict, upload: bool = True) -> dict:
         _cleanup(lang_dir, image_dir)
 
         run_summary["videos"].append(result)
+        run_summary["pipeline_type"] = "shorts"
 
         print(f"\n{'='*60}")
         print(f"  Shorts Pipeline complete!  Output: {run_dir}")
@@ -504,6 +512,10 @@ def run_shorts_pipeline(config: dict, upload: bool = True) -> dict:
     except Exception as e:
         print(f"\n  ERROR: {e}")
         log_run(run_dir, "error", "failed", {"error": str(e)})
+        run_summary["videos"].append(result)
+        run_summary["pipeline_type"] = "shorts"
+        run_summary["fatal_error"] = str(e)
+        send_run_summary(config, run_summary)
         raise
 
 
@@ -603,6 +615,7 @@ def run_poem_pipeline(config: dict, upload: bool = True) -> dict:
             except Exception as e:
                 print(f"  Upload failed: {e}")
                 log_run(run_dir, "upload", "failed", {"error": str(e)})
+                result["upload_error"] = str(e)
         else:
             print("[8] Upload skipped (--no-upload mode)")
 
@@ -629,6 +642,7 @@ def run_poem_pipeline(config: dict, upload: bool = True) -> dict:
         _cleanup(lang_dir, image_dir)
 
         run_summary["videos"].append(result)
+        run_summary["pipeline_type"] = "poem"
 
         print(f"\n{'='*60}")
         print(f"  Poem Pipeline complete!  Output: {run_dir}")
@@ -640,6 +654,10 @@ def run_poem_pipeline(config: dict, upload: bool = True) -> dict:
     except Exception as e:
         print(f"\n  ERROR: {e}")
         log_run(run_dir, "error", "failed", {"error": str(e)})
+        run_summary["videos"].append(result)
+        run_summary["pipeline_type"] = "poem"
+        run_summary["fatal_error"] = str(e)
+        send_run_summary(config, run_summary)
         raise
 
 
@@ -745,6 +763,7 @@ def run_lullaby_pipeline(config: dict, upload: bool = True) -> dict:
             except Exception as e:
                 print(f"  Upload failed: {e}")
                 log_run(run_dir, "upload", "failed", {"error": str(e)})
+                result["upload_error"] = str(e)
         else:
             print("[8] Upload skipped (--no-upload mode)")
 
@@ -771,6 +790,7 @@ def run_lullaby_pipeline(config: dict, upload: bool = True) -> dict:
         _cleanup(lang_dir, image_dir)
 
         run_summary["videos"].append(result)
+        run_summary["pipeline_type"] = "lullaby"
 
         print(f"\n{'='*60}")
         print(f"  Lullaby Pipeline complete!  Output: {run_dir}")
@@ -782,6 +802,10 @@ def run_lullaby_pipeline(config: dict, upload: bool = True) -> dict:
     except Exception as e:
         print(f"\n  ERROR: {e}")
         log_run(run_dir, "error", "failed", {"error": str(e)})
+        run_summary["videos"].append(result)
+        run_summary["pipeline_type"] = "lullaby"
+        run_summary["fatal_error"] = str(e)
+        send_run_summary(config, run_summary)
         raise
 
 

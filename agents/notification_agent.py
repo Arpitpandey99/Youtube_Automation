@@ -13,16 +13,56 @@ from email.mime.multipart import MIMEMultipart
 def _build_body(run_summary: dict) -> tuple:
     """Build subject and body text from run summary."""
     timestamp = run_summary.get("timestamp", "")
-    subject = f"[YouTube Bot] Run Complete — {timestamp}"
+    pipeline_type = run_summary.get("pipeline_type", "unknown")
+    fatal_error = run_summary.get("fatal_error")
 
-    lines = [f"Pipeline run completed: {timestamp}", ""]
+    # Determine overall status for subject line
+    has_failure = fatal_error is not None
+    for v in run_summary.get("videos", []):
+        if v.get("upload_error"):
+            has_failure = True
+
+    status_label = "FAILED" if has_failure else "OK"
+    subject = f"[YouTube Bot] {pipeline_type.title()} {status_label} — {timestamp}"
+
+    lines = [f"Pipeline run: {pipeline_type} — {timestamp}", ""]
+
+    if fatal_error:
+        lines.append(f"  FATAL ERROR: {fatal_error}")
+        lines.append("")
+
     for v in run_summary.get("videos", []):
         lang = v.get("language", "Unknown")
         lines.append(f"── {lang} " + "─" * (40 - len(lang)))
+
         video_url  = v.get("video_url")
         shorts_url = v.get("shorts_url")
-        lines.append(f"  Full video : {video_url  if video_url  else 'FAILED / skipped'}")
-        lines.append(f"  Shorts     : {shorts_url if shorts_url else 'FAILED / skipped'}")
+        upload_err = v.get("upload_error")
+
+        # Show fields relevant to the pipeline type
+        if pipeline_type == "shorts":
+            if shorts_url:
+                lines.append(f"  Shorts     : {shorts_url}")
+            elif upload_err:
+                lines.append(f"  Shorts     : UPLOAD FAILED — {upload_err}")
+            else:
+                lines.append(f"  Shorts     : not produced")
+        elif pipeline_type in ("video", "poem", "lullaby"):
+            if video_url:
+                lines.append(f"  Video      : {video_url}")
+            elif upload_err:
+                lines.append(f"  Video      : UPLOAD FAILED — {upload_err}")
+            else:
+                lines.append(f"  Video      : not produced")
+        else:
+            # Fallback: show both
+            lines.append(f"  Full video : {video_url  if video_url  else 'FAILED / skipped'}")
+            lines.append(f"  Shorts     : {shorts_url if shorts_url else 'FAILED / skipped'}")
+
+        ig_url = v.get("instagram_url")
+        if ig_url:
+            lines.append(f"  Instagram  : {ig_url}")
+
         lines.append("")
     lines.append(f"Output dir : {run_summary.get('run_dir', 'N/A')}")
     return subject, "\n".join(lines)

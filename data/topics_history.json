@@ -232,5 +232,65 @@
     "category": "nature",
     "target_age": "3-8",
     "description": "Explore the colorful world of gardens and the amazing bugs that help them grow!"
+  },
+  {
+    "topic": "Super Starfish: The Amazing Lives of Our Ocean Friends!",
+    "category": "animals",
+    "target_age": "3-8",
+    "description": "Dive into the fascinating world of starfish and discover their unique abilities and fun facts!"
+  },
+  {
+    "topic": "Funky Foot Friends: Discovering the Unique Ways Animals Move!",
+    "category": "animals",
+    "target_age": "3-8",
+    "description": "Explore the fun and funky ways different animals move, from hopping kangaroos to slithering snakes!"
+  },
+  {
+    "topic": "Lively Light: How Colors Dance in the Sun!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Explore how sunlight creates a rainbow of colors and the fun science behind it!"
+  },
+  {
+    "topic": "Secret Sounds: How Animals Communicate!",
+    "category": "animals",
+    "target_age": "3-8",
+    "description": "Explore the fascinating ways different animals use sounds to talk to each other and their special calls!"
+  },
+  {
+    "topic": "Cosmic Comets: The Messengers of Space!",
+    "category": "space",
+    "target_age": "3-8",
+    "description": "Explore the fascinating world of comets and learn how they travel through our solar system!"
+  },
+  {
+    "topic": "Fantastic Fungi: The Hidden World of Mushrooms!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Explore the colorful and fascinating world of mushrooms and how they help our planet!"
+  },
+  {
+    "topic": "Magical Mammal Migrations: Where Do They Go?",
+    "category": "animals",
+    "target_age": "3-8",
+    "description": "Explore the incredible journeys that mammals make around the world and why they travel!"
+  },
+  {
+    "topic": "Dancing Dots: The Colorful World of Patterns!",
+    "category": "art, nature, science",
+    "target_age": "3-8",
+    "description": "Explore the vibrant patterns found in nature and art, and learn how they come to life!"
+  },
+  {
+    "topic": "Wonders of Water: The Amazing Journey of a Raindrop!",
+    "category": "nature",
+    "target_age": "3-8",
+    "description": "Explore the incredible journey of a raindrop as it travels from the sky to rivers, lakes, and finally back to the clouds!"
+  },
+  {
+    "topic": "Super Silly Shadows: The Magic of Light and Dark!",
+    "category": "science",
+    "target_age": "3-8",
+    "description": "Explore how shadows are made and the fun shapes they can create with light!"
   }
 ]

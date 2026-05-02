@@ -27,13 +27,23 @@ def get_authenticated_service(config: dict):
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                raise RuntimeError(
+                    f"OAuth token refresh failed: {e}. "
+                    "The refresh token may have expired (Google revokes tokens after 7 days "
+                    "if the OAuth app is in 'Testing' status). Fix: re-run browser auth on a "
+                    "machine with a browser, or publish the OAuth app in Google Cloud Console "
+                    "to get long-lived refresh tokens."
+                )
         else:
             if not os.path.exists(client_secrets):
                 raise FileNotFoundError(
                     f"Missing {client_secrets}. Download OAuth 2.0 credentials from "
                     "Google Cloud Console → APIs & Services → Credentials"
                 )
+            # This requires a browser — will fail on headless servers
             flow = InstalledAppFlow.from_client_secrets_file(client_secrets, SCOPES)
             creds = flow.run_local_server(port=0)
 
