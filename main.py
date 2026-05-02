@@ -1103,6 +1103,13 @@ if __name__ == "__main__":
         print("  python main.py --list-series              # show active series with progress")
         print("  python main.py --optimize-thumbnails      # replace underperforming thumbnails")
 
+    # --- v2-tech: Approval bot ---
+    elif "--approval-bot" in args:
+        init_db()
+        from agents.approval_agent import ApprovalBot
+        bot = ApprovalBot(config)
+        bot.run()
+
     # --- v2 Growth Intelligence commands ---
     elif "--analytics-sweep" in args:
         init_db()

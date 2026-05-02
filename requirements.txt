@@ -10,15 +10,17 @@ schedule>=1.2.0
 requests>=2.31.0
 replicate>=0.15.0
 
-# ElevenLabs TTS — native Hinglish support (tts.provider=elevenlabs, recommended)
+# ElevenLabs TTS — native Hinglish support (tts.provider=elevenlabs)
 elevenlabs>=1.0.0
 
-# Google Cloud TTS — WaveNet/Neural2 voices, uses GCP credits (tts.provider=google, recommended)
+# Google Cloud TTS — WaveNet/Neural2 voices, uses GCP credits (tts.provider=google)
 google-cloud-texttospeech>=2.0.0
 
-# AI video generation — animated cartoon clips from static images
-fal-client>=0.5.0              # fal.ai API for Kling 3.0 image-to-video
-google-genai>=1.0.0            # Google Gen AI SDK for Veo 2 image-to-video
+# v2: Telegram approval bot
+python-telegram-bot>=20.0
 
-# Optional: Prefect orchestration (only if orchestration.engine=prefect)
-# prefect>=3.0.0
+# v2: Web search for research_agent (free fallback, no API key)
+duckduckgo-search>=7.0.0
+
+# v2: Testing
+pytest>=7.0.0

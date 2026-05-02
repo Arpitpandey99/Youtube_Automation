@@ -1,4 +1,4 @@
-# YouTube Kids Video Automation Configuration
+# YouTube Automation v2 — Tech Explainer Configuration
 # Copy this file to config.yaml and fill in your API keys
 
 openai:
@@ -62,6 +62,12 @@ languages:
       - "en-IN-NeerjaNeural"            # Indian English female — warm, natural Hinglish
       - "en-IN-NeerjaExpressiveNeural"  # Indian English female — expressive, kids-friendly
       # hi-IN-SwaraNeural removed: native Hindi TTS reads English with heavy accent (bad for Hinglish)
+
+# Telegram approval bot — sends daily candidates for one-tap approval
+# Create a bot via @BotFather, then send /start to your bot to get the chat_id
+telegram:
+  bot_token: "YOUR_BOT_TOKEN"       # from BotFather
+  chat_id: "YOUR_CHAT_ID"           # your personal chat ID (use @userinfobot to find it)
 
 # YouTube configuration
 youtube:
