@@ -191,6 +191,76 @@ def init_db():
             FOREIGN KEY (video_db_id) REFERENCES videos(id)
         );
 
+        -- v2-tech: Approval queue (Telegram gate)
+        CREATE TABLE IF NOT EXISTS approval_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            candidate_path TEXT,
+            quality_score INTEGER,
+            status TEXT DEFAULT 'pending',
+            telegram_message_id INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            decided_at DATETIME,
+            decision_reason TEXT
+        );
+
+        -- v2-tech: Quality scores from LLM-as-judge
+        CREATE TABLE IF NOT EXISTS quality_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            total INTEGER,
+            hook INTEGER,
+            narrative INTEGER,
+            specificity INTEGER,
+            hinglish INTEGER,
+            verdict TEXT,
+            flags TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- v2-tech: Individual competitor video data
+        CREATE TABLE IF NOT EXISTS competitor_videos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id TEXT,
+            channel_name TEXT,
+            video_id TEXT UNIQUE,
+            title TEXT,
+            view_count INTEGER,
+            view_to_sub_ratio REAL,
+            duration_seconds INTEGER,
+            published_at DATETIME,
+            observed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- v2-tech: Kill switch trigger events
+        CREATE TABLE IF NOT EXISTS kill_switch_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trigger_type TEXT,
+            severity TEXT,
+            metrics_snapshot TEXT,
+            resumed_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- v2-tech: Per-provider API cost tracking (budget_guard)
+        CREATE TABLE IF NOT EXISTS api_costs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT,
+            endpoint TEXT,
+            cost_inr REAL,
+            run_id TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- v2-tech: Daily learning agent summaries
+        CREATE TABLE IF NOT EXISTS learning_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            log_date DATE,
+            summary_md TEXT,
+            weight_changes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_videos_video_id ON videos(video_id);
         CREATE INDEX IF NOT EXISTS idx_videos_category ON videos(category);
         CREATE INDEX IF NOT EXISTS idx_metrics_video_id ON metrics(video_id);
@@ -199,6 +269,10 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_trend_topics_score ON trend_topics(trend_score DESC);
         CREATE INDEX IF NOT EXISTS idx_series_status ON series(status);
         CREATE INDEX IF NOT EXISTS idx_series_episodes_status ON series_episodes(status);
+        CREATE INDEX IF NOT EXISTS idx_approval_queue_status ON approval_queue(status);
+        CREATE INDEX IF NOT EXISTS idx_api_costs_provider ON api_costs(provider, created_at);
+        CREATE INDEX IF NOT EXISTS idx_competitor_videos_channel ON competitor_videos(channel_id);
+        CREATE INDEX IF NOT EXISTS idx_kill_switch_events_type ON kill_switch_events(trigger_type);
     """)
 
     _migrate_db(conn)
@@ -780,6 +854,229 @@ def get_upload_time_stats() -> list:
            WHERE views_48h > 0
            GROUP BY upload_hour, day_of_week
            ORDER BY avg_views DESC"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- Approval Queue (v2-tech) ---
+
+def insert_approval_queue(run_id: str, candidate_path: str, quality_score: int,
+                          telegram_message_id: int = None) -> int:
+    """Insert a new entry into the approval queue."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO approval_queue (run_id, candidate_path, quality_score,
+           status, telegram_message_id, created_at)
+           VALUES (?, ?, ?, 'pending', ?, ?)""",
+        (run_id, candidate_path, quality_score, telegram_message_id,
+         datetime.now().isoformat()),
+    )
+    row_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def update_approval_status(run_id: str, status: str, reason: str = "") -> None:
+    """Update the status of an approval queue entry."""
+    conn = get_connection()
+    conn.execute(
+        """UPDATE approval_queue SET status = ?, decided_at = ?, decision_reason = ?
+           WHERE run_id = ? AND status = 'pending'""",
+        (status, datetime.now().isoformat(), reason, run_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_approval_telegram_id(run_id: str, telegram_message_id: int) -> None:
+    """Update the Telegram message ID for a queued candidate."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE approval_queue SET telegram_message_id = ? WHERE run_id = ?",
+        (telegram_message_id, run_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_pending_approvals() -> list:
+    """Get all pending approval queue entries."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM approval_queue WHERE status = 'pending' ORDER BY created_at ASC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_approved_candidates() -> list:
+    """Get all approved candidates not yet uploaded."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM approval_queue WHERE status = 'approved' ORDER BY decided_at ASC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_timed_out_approvals(hours: int = 24) -> list:
+    """Get pending candidates older than the timeout window."""
+    cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM approval_queue WHERE status = 'pending' AND created_at < ?",
+        (cutoff,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- Quality Scores (v2-tech) ---
+
+def insert_quality_score(run_id: str, total: int, hook: int, narrative: int,
+                         specificity: int, hinglish: int, verdict: str,
+                         flags: list = None) -> int:
+    """Insert a quality score record."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    import json as _json
+    cursor.execute(
+        """INSERT INTO quality_scores (run_id, total, hook, narrative,
+           specificity, hinglish, verdict, flags, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (run_id, total, hook, narrative, specificity, hinglish, verdict,
+         _json.dumps(flags or []), datetime.now().isoformat()),
+    )
+    row_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+# --- Competitor Videos (v2-tech) ---
+
+def insert_competitor_video(channel_id: str, channel_name: str, video_id: str,
+                            title: str, view_count: int, view_to_sub_ratio: float,
+                            duration_seconds: int, published_at: str) -> int:
+    """Insert or ignore a competitor video record."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT OR IGNORE INTO competitor_videos
+           (channel_id, channel_name, video_id, title, view_count,
+            view_to_sub_ratio, duration_seconds, published_at, observed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (channel_id, channel_name, video_id, title, view_count,
+         view_to_sub_ratio, duration_seconds, published_at,
+         datetime.now().isoformat()),
+    )
+    row_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+# --- Kill Switch Events (v2-tech) ---
+
+def insert_kill_switch_event(trigger_type: str, severity: str,
+                             metrics_snapshot: dict) -> int:
+    """Insert a kill switch event."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    import json as _json
+    cursor.execute(
+        """INSERT INTO kill_switch_events (trigger_type, severity, metrics_snapshot, created_at)
+           VALUES (?, ?, ?, ?)""",
+        (trigger_type, severity, _json.dumps(metrics_snapshot),
+         datetime.now().isoformat()),
+    )
+    row_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def mark_kill_switch_resumed(event_id: int) -> None:
+    """Mark a kill switch event as resumed."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE kill_switch_events SET resumed_at = ? WHERE id = ?",
+        (datetime.now().isoformat(), event_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+# --- API Costs (v2-tech) ---
+
+def insert_api_cost(provider: str, endpoint: str, cost_inr: float,
+                    run_id: str = "") -> int:
+    """Insert an API cost record."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO api_costs (provider, endpoint, cost_inr, run_id, created_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (provider, endpoint, cost_inr, run_id, datetime.now().isoformat()),
+    )
+    row_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def get_monthly_api_costs(provider: str = None) -> list:
+    """Get current month's API costs, optionally filtered by provider."""
+    month_start = datetime.now().strftime("%Y-%m-01")
+    conn = get_connection()
+    if provider:
+        rows = conn.execute(
+            """SELECT provider, COALESCE(SUM(cost_inr), 0) as total
+               FROM api_costs WHERE provider = ? AND created_at >= ?
+               GROUP BY provider""",
+            (provider, month_start),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT provider, COALESCE(SUM(cost_inr), 0) as total
+               FROM api_costs WHERE created_at >= ?
+               GROUP BY provider ORDER BY total DESC""",
+            (month_start,),
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- Learning Log (v2-tech) ---
+
+def insert_learning_log(log_date: str, summary_md: str,
+                        weight_changes: dict) -> int:
+    """Insert a learning log entry."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    import json as _json
+    cursor.execute(
+        """INSERT INTO learning_log (log_date, summary_md, weight_changes, created_at)
+           VALUES (?, ?, ?, ?)""",
+        (log_date, summary_md, _json.dumps(weight_changes),
+         datetime.now().isoformat()),
+    )
+    row_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def get_recent_learning_logs(days: int = 7) -> list:
+    """Get learning log entries from the last N days."""
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM learning_log WHERE log_date >= ? ORDER BY log_date DESC",
+        (cutoff,),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
