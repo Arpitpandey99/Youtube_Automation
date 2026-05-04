@@ -21,17 +21,16 @@ IMPORTANT: Write the title and description in {language} language.
 Include both {language} and English tags for better reach.
 The thumbnail_text should be in {language}."""
 
-    prompt = f"""Generate YouTube video metadata for a kids' video.
+    prompt = f"""Generate YouTube video metadata for a Hinglish tech-explainer video.
 
 Topic: {topic_data["topic"]}
-Category: {topic_data["category"]}
-Target age: {topic_data["target_age"]}
+Category: {topic_data.get("category", "tech")}
 Video title from script: {script_data["title"]}
 {lang_instruction}
 Generate:
 1. An SEO-optimized, catchy title (max 70 chars, include emoji)
 2. A description (include keywords, 3-4 sentences + hashtags)
-3. Tags (30 relevant tags)
+3. Tags (30 relevant tags mixing Hindi and English tech keywords)
 4. A short text to overlay on the thumbnail (max 4 words)
 
 Respond in this exact JSON format:
@@ -44,7 +43,7 @@ Respond in this exact JSON format:
 
 Only return JSON, nothing else."""
 
-    system_msg = "You are a YouTube SEO expert for kids' channels. Always respond with valid JSON only."
+    system_msg = "You are a YouTube SEO expert for Hinglish tech-explainer channels. Always respond with valid JSON only."
     if language == "Hindi":
         system_msg += " Write title and description in Hinglish (casual Hindi-English mix)."
     elif language != "English":
@@ -73,11 +72,10 @@ def generate_instagram_metadata(config: dict, topic_data: dict, script_data: dic
     if language != "English":
         lang_instruction = f"Write the caption in {language} language but keep hashtags in English for maximum reach."
 
-    prompt = f"""Generate Instagram Reel metadata for a kids' educational video.
+    prompt = f"""Generate Instagram Reel metadata for a Hinglish tech-explainer video.
 
 Topic: {topic_data["topic"]}
-Category: {topic_data["category"]}
-Target age: {topic_data["target_age"]}
+Category: {topic_data.get("category", "tech")}
 Video title: {script_data["title"]}
 {lang_instruction}
 
