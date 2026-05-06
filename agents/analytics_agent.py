@@ -170,6 +170,64 @@ def get_performance_hints(config: dict) -> str:
     return "\n".join(hints)
 
 
+def get_channel_summary(config: dict, days: int = 7) -> dict:
+    """Return channel-level summary for the last N days.
+
+    Tries YouTube Data API channels.list for subscriber count.
+    Aggregates views/watch-time from the local metrics DB as fallback.
+    Returns None on failure so the report section degrades gracefully.
+    """
+    summary = {}
+
+    # ── 1. YouTube Data API — subscriber snapshot ──────────────────────────
+    try:
+        from googleapiclient.discovery import build
+        from google.oauth2.credentials import Credentials
+
+        token_file = config.get("youtube", {}).get("token_file", "token.json")
+        creds = Credentials.from_authorized_user_file(token_file)
+        youtube = build("youtube", "v3", credentials=creds)
+
+        ch = youtube.channels().list(part="statistics", mine=True).execute()
+        if ch.get("items"):
+            stats = ch["items"][0]["statistics"]
+            summary["total_subs"] = int(stats.get("subscriberCount", 0))
+            summary["total_views_lifetime"] = int(stats.get("viewCount", 0))
+    except Exception:
+        pass  # Gracefully skip — no OAuth or quota
+
+    # ── 2. Aggregate from local metrics DB ─────────────────────────────────
+    try:
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        conn = get_connection()
+
+        agg = conn.execute(
+            "SELECT SUM(views) as views, AVG(ctr) as ctr, "
+            "AVG(avg_watch_time) as avg_view_duration "
+            "FROM metrics WHERE fetched_at >= ?",
+            (cutoff,)
+        ).fetchone()
+
+        if agg and agg["views"] is not None:
+            summary["views"] = int(agg["views"] or 0)
+            summary["ctr"] = round(agg["ctr"] or 0, 2)
+            summary["avg_view_duration"] = round(agg["avg_view_duration"] or 0, 0)
+            # watch hours: avg_watch_time is in seconds per video × view count
+            summary["watch_hours"] = round((agg["avg_view_duration"] or 0) * (agg["views"] or 0) / 3600, 1)
+
+        # Total cumulative watch hours (rough: all-time metrics sum)
+        total_wh = conn.execute(
+            "SELECT SUM(avg_watch_time * views) / 3600.0 FROM metrics"
+        ).fetchone()[0]
+        summary["total_watch_hours"] = round(total_wh or 0, 1)
+
+        conn.close()
+    except Exception:
+        pass
+
+    return summary or None
+
+
 def get_pending_analytics_videos(config: dict) -> list:
     """Get videos that need analytics fetched (uploaded > N hours ago, no recent metrics)."""
     delay_hours = config.get("analytics", {}).get("fetch_delay_hours", 48)

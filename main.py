@@ -21,7 +21,7 @@ import copy
 import shutil
 import yaml
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from agents.topic_agent import generate_topic
 from agents.script_agent import generate_script, generate_shorts_script
@@ -489,6 +489,229 @@ def run_strategy_loop(config: dict) -> dict:
     return results
 
 
+# ── Weekly Report ────────────────────────────────────────────────────────────
+
+def run_report(config: dict) -> str:
+    """Generate and send the weekly observability dashboard.
+
+    Sections:
+      1. Pipeline health (quality gate ratios, approval gate, days produced)
+      2. Budget spend (last 7 days + month-to-date vs caps)
+      3. Kill switch status
+      4. Channel analytics (YouTube API, best-effort)
+      5. Learning log latest entry
+    Saves to data/learning_log/weekly_<date>.md and sends via Telegram.
+    """
+    init_db()
+    from agents.db import get_connection
+
+    today = datetime.now()
+    week_ago = today - timedelta(days=7)
+    month_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    week_str = week_ago.strftime("%Y-%m-%d")
+    month_str = month_start.strftime("%Y-%m-%d")
+
+    lines = []
+    lines.append(f"# Weekly Pipeline Report — {today.strftime('%d %b %Y')}")
+    lines.append(f"_{today.strftime('%Y-%m-%d %H:%M')} IST_\n")
+
+    # ── Section 1: Pipeline health ──────────────────────────────────────────
+    lines.append("## Pipeline Health (last 7 days)\n")
+    try:
+        conn = get_connection()
+
+        # Videos produced (in approval_queue)
+        rows = conn.execute(
+            "SELECT status, COUNT(*) as n FROM approval_queue "
+            "WHERE created_at >= ? GROUP BY status",
+            (week_str,)
+        ).fetchall()
+        aq = {r["status"]: r["n"] for r in rows}
+        total_produced = sum(aq.values())
+        approved = aq.get("approved", 0)
+        rejected = aq.get("rejected", 0)
+        timeout  = aq.get("timeout", 0)
+        pending  = aq.get("pending", 0)
+        lines.append(f"- Videos produced: **{total_produced}** "
+                     f"(approved={approved}, rejected={rejected}, timeout={timeout}, pending={pending})")
+
+        # Days with an upload this week
+        days_with_upload = conn.execute(
+            "SELECT COUNT(DISTINCT date(created_at)) FROM approval_queue "
+            "WHERE status='approved' AND created_at >= ?",
+            (week_str,)
+        ).fetchone()[0]
+        lines.append(f"- Days with upload: **{days_with_upload}/7**")
+
+        # Quality gate ratios
+        qrows = conn.execute(
+            "SELECT verdict, COUNT(*) as n FROM quality_scores "
+            "WHERE created_at >= ? GROUP BY verdict",
+            (week_str,)
+        ).fetchall()
+        qd = {r["verdict"]: r["n"] for r in qrows}
+        q_total = sum(qd.values()) or 1
+        lines.append(f"- Quality gate — approve: {qd.get('approve',0)} "
+                     f"({qd.get('approve',0)*100//q_total}%), "
+                     f"flag: {qd.get('flag_for_review',0)} "
+                     f"({qd.get('flag_for_review',0)*100//q_total}%), "
+                     f"reject: {qd.get('reject',0)} "
+                     f"({qd.get('reject',0)*100//q_total}%)")
+
+        # Average quality score
+        avg_q = conn.execute(
+            "SELECT AVG(total) FROM quality_scores WHERE created_at >= ?",
+            (week_str,)
+        ).fetchone()[0]
+        if avg_q:
+            lines.append(f"- Avg quality score: **{avg_q:.0f}/100**")
+
+        # Approval gate human-rejection rate
+        decided = approved + rejected
+        human_reject_pct = (rejected * 100 // decided) if decided > 0 else 0
+        lines.append(f"- Human rejection rate: **{human_reject_pct}%** "
+                     f"(target <15%)")
+
+        conn.close()
+    except Exception as e:
+        lines.append(f"- _(pipeline DB query failed: {e})_")
+
+    # ── Section 2: Budget ────────────────────────────────────────────────────
+    lines.append("\n## Budget (INR)\n")
+    try:
+        budget_cfg = {}
+        budget_path = os.path.join(BASE_DIR, "config", "budget.yaml")
+        if os.path.exists(budget_path):
+            import yaml as _yaml
+            with open(budget_path) as f:
+                budget_cfg = _yaml.safe_load(f).get("monthly_caps_inr", {})
+
+        conn = get_connection()
+        providers = ["openai", "sarvam", "replicate", "huggingface"]
+        total_week = 0.0
+        total_month = 0.0
+        for p in providers:
+            week_spend = conn.execute(
+                "SELECT COALESCE(SUM(cost_inr),0) FROM api_costs "
+                "WHERE provider=? AND created_at >= ?", (p, week_str)
+            ).fetchone()[0]
+            month_spend = conn.execute(
+                "SELECT COALESCE(SUM(cost_inr),0) FROM api_costs "
+                "WHERE provider=? AND created_at >= ?", (p, month_str)
+            ).fetchone()[0]
+            cap = budget_cfg.get(p, 0)
+            pct = int(month_spend * 100 / cap) if cap > 0 else 0
+            bar = "=" * (pct // 10) + "-" * (10 - pct // 10)
+            lines.append(f"- **{p.capitalize()}**: ₹{week_spend:.0f} this week, "
+                         f"₹{month_spend:.0f}/{cap} MTD [{bar}] {pct}%")
+            total_week += week_spend
+            total_month += month_spend
+        total_cap = budget_cfg.get("total", 1500)
+        lines.append(f"- **Total**: ₹{total_week:.0f} this week, "
+                     f"₹{total_month:.0f}/₹{total_cap} MTD "
+                     f"({int(total_month*100/total_cap)}% of cap)")
+        conn.close()
+    except Exception as e:
+        lines.append(f"- _(budget query failed: {e})_")
+
+    # ── Section 3: Kill switch ───────────────────────────────────────────────
+    lines.append("\n## Kill Switch\n")
+    try:
+        from agents.kill_switch_agent import is_paused
+        paused = is_paused()
+        lines.append(f"- Status: **{'PAUSED' if paused else 'ACTIVE'}**")
+
+        conn = get_connection()
+        events = conn.execute(
+            "SELECT trigger_type, severity, created_at FROM kill_switch_events "
+            "WHERE created_at >= ? ORDER BY created_at DESC",
+            (week_str,)
+        ).fetchall()
+        if events:
+            lines.append(f"- Events this week: {len(events)}")
+            for ev in events[:3]:
+                lines.append(f"  - {ev['created_at'][:10]}: {ev['trigger_type']} ({ev['severity']})")
+        else:
+            lines.append("- Events this week: **0** (all clear)")
+        conn.close()
+    except Exception as e:
+        lines.append(f"- _(kill switch query failed: {e})_")
+
+    # ── Section 4: Channel analytics (best-effort) ───────────────────────────
+    lines.append("\n## Channel Analytics (last 7 days)\n")
+    try:
+        from agents.analytics_agent import get_channel_summary
+        summary = get_channel_summary(config, days=7)
+        has_data = summary and any(
+            summary.get(k) for k in ("views", "total_subs", "watch_hours")
+        )
+        if has_data:
+            def _fmt(v, default="—"): return v if v is not None else default
+            lines.append(f"- Views (7d): **{_fmt(summary.get('views', 0))}**")
+            wh = summary.get('watch_hours', 0) or 0
+            lines.append(f"- Watch hours (7d): **{wh:.1f}h**")
+            lines.append(f"- Subscribers (total): **{_fmt(summary.get('total_subs', '—'))}**")
+            lines.append(f"- Avg CTR: **{summary.get('ctr', 0) or 0:.2f}%**")
+            lines.append(f"- Avg view duration: **{summary.get('avg_view_duration', 0) or 0:.0f}s**")
+            ypp_hours = summary.get("total_watch_hours", 0) or 0
+            ypp_pct = min(int(ypp_hours * 100 / 4000), 100)
+            lines.append(f"- YPP watch hours: {ypp_hours:.0f}/4000h ({ypp_pct}%)")
+        else:
+            lines.append("- _(no analytics data yet — upload first videos to see metrics)_")
+    except Exception as e:
+        lines.append(f"- _(analytics unavailable: {e})_")
+
+    # ── Section 5: Latest learning log ──────────────────────────────────────
+    lines.append("\n## Learning Log (latest entry)\n")
+    try:
+        conn = get_connection()
+        entry = conn.execute(
+            "SELECT log_date, summary_md FROM learning_log "
+            "ORDER BY log_date DESC LIMIT 1"
+        ).fetchone()
+        if entry:
+            lines.append(f"_From {entry['log_date']}_\n")
+            # Include first 500 chars of the summary
+            summary = entry["summary_md"] or ""
+            lines.append(summary[:500] + ("..." if len(summary) > 500 else ""))
+        else:
+            lines.append("_No learning log entries yet._")
+        conn.close()
+    except Exception as e:
+        lines.append(f"- _(learning log query failed: {e})_")
+
+    lines.append(f"\n---\n_Pipeline v2 | Hinglish Tech Explainer | {today.strftime('%d %b %Y')}_")
+
+    report_md = "\n".join(lines)
+
+    # Save to data/learning_log/
+    log_dir = os.path.join(BASE_DIR, "data", "learning_log")
+    os.makedirs(log_dir, exist_ok=True)
+    report_path = os.path.join(log_dir, f"weekly_{today.strftime('%Y-%m-%d')}.md")
+    with open(report_path, "w") as f:
+        f.write(report_md)
+    print(f"  Report saved: {report_path}")
+
+    # Send via Telegram
+    tg = config.get("telegram", {})
+    if tg.get("bot_token") and tg.get("chat_id"):
+        try:
+            import requests as _req
+            # Telegram message limit is 4096 chars — truncate if needed
+            msg = report_md[:4000] + ("\n_(truncated)_" if len(report_md) > 4000 else "")
+            _req.post(
+                f"https://api.telegram.org/bot{tg['bot_token']}/sendMessage",
+                json={"chat_id": tg["chat_id"], "text": msg, "parse_mode": "Markdown"},
+                timeout=15,
+            )
+            print("  Telegram notification sent.")
+        except Exception as e:
+            print(f"  Telegram send failed: {e}")
+
+    print(report_md)
+    return report_md
+
+
 # ── Publish approved candidates ─────────────────────────────────────────────
 
 def run_publish_approved(config: dict, dry_run: bool = False) -> list:
@@ -576,6 +799,7 @@ if __name__ == "__main__":
         print("  python main.py --feedback-loop               # analytics → learning → kill-switch")
         print("  python main.py --strategy-loop               # trends + competitor + cluster + series")
         print("  python main.py --analytics-sweep             # one-shot bulk analytics fetch")
+        print("  python main.py --report                      # weekly observability dashboard")
         print("  python main.py --generate-music              # download background music")
         print("  python main.py --cleanup-old [--days 7] [--dry-run]")
 
@@ -597,6 +821,9 @@ if __name__ == "__main__":
 
     elif "--strategy-loop" in args:
         run_strategy_loop(config)
+
+    elif "--report" in args:
+        run_report(config)
 
     # --- Analytics + Intelligence ---
     elif "--analytics-sweep" in args:
