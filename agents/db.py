@@ -884,7 +884,7 @@ def update_approval_status(run_id: str, status: str, reason: str = "") -> None:
     conn = get_connection()
     conn.execute(
         """UPDATE approval_queue SET status = ?, decided_at = ?, decision_reason = ?
-           WHERE run_id = ? AND status = 'pending'""",
+           WHERE run_id = ? AND status NOT IN ('published', 'rejected', 'timeout')""",
         (status, datetime.now().isoformat(), reason, run_id),
     )
     conn.commit()
